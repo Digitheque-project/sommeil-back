@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ConsultationsService {
@@ -11,7 +12,10 @@ export class ConsultationsService {
   private readonly CONSULTATION_EXTERNE_URL =
     process.env.CONSULTATION_EXTERNE_URL || 'http://localhost:3001';
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly prisma: PrismaService
+  ) {}
 
   private async getAuthToken(): Promise<string> {
     // Récupérer le token depuis l'en-tête Authorization de la requête
@@ -27,151 +31,224 @@ export class ConsultationsService {
   }
 
   async getAllConsultations(filters: any) {
+    // Essayer d'abord la base de données locale
     try {
-      const token = await this.getAuthToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.CONSULTATION_EXTERNE_URL}/consultations`, {
-          headers,
-          params: filters,
-        }),
-      );
-
-      return response.data;
-    } catch (error) {
-      const err = error as AxiosError;
-      if (this.isConnectionError(error)) {
-        this.logger.warn(
-          `Service consultation externe non disponible (${this.CONSULTATION_EXTERNE_URL}), utilisation des données mockées`,
-        );
-        return this.getMockConsultations();
+      const where: any = {};
+      if (filters.date) {
+        where.date = new Date(filters.date);
       }
-      this.logger.error(
-        `Erreur lors de la récupération des consultations: ${err.message}`,
-      );
-      throw error;
+      if (filters.dateFrom) {
+        where.date = { gte: new Date(filters.dateFrom) };
+      }
+      if (filters.dateTo) {
+        where.date = { ...where.date, lte: new Date(filters.dateTo) };
+      }
+      if (filters.archived !== undefined) {
+        where.archived = filters.archived;
+      }
+
+      const consultations = await this.prisma.consultationLocale.findMany({
+        where,
+        include: {
+          observations: true,
+          compteRendus: true,
+        },
+        orderBy: { date: 'desc' },
+      });
+
+      return consultations;
+    } catch (dbError) {
+      this.logger.warn(`Erreur base de données locale, tentative API externe: ${dbError}`);
+      
+      // Fallback vers API externe
+      try {
+        const token = await this.getAuthToken();
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+        const response = await firstValueFrom(
+          this.httpService.get(`${this.CONSULTATION_EXTERNE_URL}/consultations`, {
+            headers,
+            params: filters,
+          })
+        );
+
+        return response.data;
+      } catch (error) {
+        const err = error as AxiosError;
+        if (this.isConnectionError(error)) {
+          this.logger.warn(`Service consultation externe non disponible, utilisation des données mockées`);
+          return this.getMockConsultations();
+        }
+        this.logger.error(`Erreur lors de la récupération des consultations: ${err.message}`);
+        throw error;
+      }
     }
   }
 
-  async getConsultationById(id: number) {
+  async getConsultationById(id: string) {
+    // Essayer d'abord la base de données locale
+    try {
+      const consultation = await this.prisma.consultationLocale.findUnique({
+        where: { id },
+        include: {
+          observations: true,
+          compteRendus: true,
+        },
+      });
+
+      if (consultation) {
+        return consultation;
+      }
+    } catch (dbError) {
+      this.logger.warn(`Erreur base de données locale, tentative API externe: ${dbError}`);
+    }
+
+    // Fallback vers API externe
     try {
       const token = await this.getAuthToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       const response = await firstValueFrom(
-        this.httpService.get(
-          `${this.CONSULTATION_EXTERNE_URL}/consultations/${id}`,
-          {
-            headers,
-          },
-        ),
+        this.httpService.get(`${this.CONSULTATION_EXTERNE_URL}/consultations/${id}`, {
+          headers,
+        })
       );
 
       return response.data;
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(
-          `Service consultation externe non disponible, utilisation des données mockées pour consultation ${id}`,
-        );
-        return this.getMockConsultation(id);
+        this.logger.warn(`Service consultation externe non disponible, utilisation des données mockées pour consultation ${id}`);
+        return this.getMockConsultation(+id);
       }
-      this.logger.error(
-        `Erreur lors de la récupération de la consultation ${id}: ${err.message}`,
-      );
+      this.logger.error(`Erreur lors de la récupération de la consultation ${id}: ${err.message}`);
       throw new NotFoundException('Consultation non trouvée');
     }
   }
 
-  async finalizeConsultation(id: number, data: any) {
+  async finalizeConsultation(id: string, data: any) {
+    // Sauvegarder dans la base de données locale
+    try {
+      const consultation = await this.prisma.consultationLocale.update({
+        where: { id },
+        data: {
+          statut: 'TERMINE',
+          observations: {
+            create: {
+              diagnostic: data.diagnostic || '',
+              notes: data.notes || '',
+            },
+          },
+        },
+      });
+      return consultation;
+    } catch (dbError) {
+      this.logger.warn(`Erreur base de données locale, tentative API externe: ${dbError}`);
+    }
+
+    // Fallback vers API externe
     try {
       const token = await this.getAuthToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       const response = await firstValueFrom(
-        this.httpService.post(
-          `${this.CONSULTATION_EXTERNE_URL}/consultations/${id}/finalize`,
-          data,
-          {
-            headers,
-          },
-        ),
+        this.httpService.post(`${this.CONSULTATION_EXTERNE_URL}/consultations/${id}/finalize`, data, {
+          headers,
+        })
       );
 
       return response.data;
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(
-          `Service consultation externe non disponible, finalisation mockée pour consultation ${id}`,
-        );
+        this.logger.warn(`Service consultation externe non disponible, finalisation mockée pour consultation ${id}`);
         return { success: true, message: 'Consultation finalisée (mock)' };
       }
-      this.logger.error(
-        `Erreur lors de la finalisation de la consultation ${id}: ${err.message}`,
-      );
+      this.logger.error(`Erreur lors de la finalisation de la consultation ${id}: ${err.message}`);
       throw error;
     }
   }
 
-  async traiterConsultation(id: number, data: any) {
+  async traiterConsultation(id: string, data: any) {
+    // Mettre à jour dans la base de données locale
+    try {
+      const updateData: any = {};
+      if (data.action === 'ouvrir') {
+        updateData.statut = 'EN_COURS';
+      } else if (data.action === 'terminer') {
+        updateData.statut = 'TERMINE';
+      } else if (data.action === 'annuler') {
+        updateData.statut = 'ANNULE';
+      }
+
+      const consultation = await this.prisma.consultationLocale.update({
+        where: { id },
+        data: updateData,
+      });
+      return consultation;
+    } catch (dbError) {
+      this.logger.warn(`Erreur base de données locale, tentative API externe: ${dbError}`);
+    }
+
+    // Fallback vers API externe
     try {
       const token = await this.getAuthToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       const response = await firstValueFrom(
-        this.httpService.post(
-          `${this.CONSULTATION_EXTERNE_URL}/consultations/${id}/traiter`,
-          data,
-          {
-            headers,
-          },
-        ),
+        this.httpService.post(`${this.CONSULTATION_EXTERNE_URL}/consultations/${id}/traiter`, data, {
+          headers,
+        })
       );
 
       return response.data;
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(
-          `Service consultation externe non disponible, traitement mocké pour consultation ${id}`,
-        );
+        this.logger.warn(`Service consultation externe non disponible, traitement mocké pour consultation ${id}`);
         return { success: true, message: 'Consultation traitée (mock)' };
       }
-      this.logger.error(
-        `Erreur lors du traitement de la consultation ${id}: ${err.message}`,
-      );
+      this.logger.error(`Erreur lors du traitement de la consultation ${id}: ${err.message}`);
       throw error;
     }
   }
 
   async getPatientConsultationHistory(patientId: string) {
+    // Essayer d'abord la base de données locale
+    try {
+      const consultations = await this.prisma.consultationLocale.findMany({
+        where: { patientId },
+        include: {
+          observations: true,
+          compteRendus: true,
+        },
+        orderBy: { date: 'desc' },
+      });
+
+      return consultations;
+    } catch (dbError) {
+      this.logger.warn(`Erreur base de données locale, tentative API externe: ${dbError}`);
+    }
+
+    // Fallback vers API externe
     try {
       const token = await this.getAuthToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       const response = await firstValueFrom(
-        this.httpService.get(
-          `${this.CONSULTATION_EXTERNE_URL}/consultations/patient/${patientId}/history`,
-          {
-            headers,
-          },
-        ),
+        this.httpService.get(`${this.CONSULTATION_EXTERNE_URL}/consultations/patient/${patientId}/history`, {
+          headers,
+        })
       );
 
       return response.data;
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(
-          `Service consultation externe non disponible, historique mocké pour patient ${patientId}`,
-        );
+        this.logger.warn(`Service consultation externe non disponible, historique mocké pour patient ${patientId}`);
         return [];
       }
-      this.logger.error(
-        `Erreur lors de la récupération de l'historique du patient ${patientId}: ${err.message}`,
-      );
+      this.logger.error(`Erreur lors de la récupération de l'historique du patient ${patientId}: ${err.message}`);
       throw error;
     }
   }
@@ -250,5 +327,62 @@ export class ConsultationsService {
       throw new NotFoundException('Consultation non trouvée');
     }
     return mock;
+  }
+
+  // Nouvelles méthodes CRUD pour la base de données locale
+  async createConsultation(data: any) {
+    return this.prisma.consultationLocale.create({
+      data: {
+        consultationId: data.consultationId || data.id,
+        date: new Date(data.date),
+        heure: data.heure,
+        motif: data.motif,
+        statut: data.statut || 'EN_ATTENTE',
+        typeVisite: data.typeVisite,
+        urgence: data.urgence || false,
+        arriveeAccueil: data.arriveeAccueil || false,
+        estReport: data.estReport || false,
+        patientId: data.patientId,
+        patientNom: data.patient?.nom || data.patientNom,
+        patientPrenom: data.patient?.prenom || data.patientPrenom,
+        patientDossier: data.patient?.dossier || data.patientDossier,
+        medecinId: data.medecinId,
+      },
+    });
+  }
+
+  async updateConsultation(id: string, data: any) {
+    return this.prisma.consultationLocale.update({
+      where: { id },
+      data,
+    });
+  }
+
+  async archiveConsultation(id: string) {
+    return this.prisma.consultationLocale.update({
+      where: { id },
+      data: { archived: true },
+    });
+  }
+
+  async addObservation(consultationId: string, data: { diagnostic?: string; notes?: string }) {
+    return this.prisma.observation.create({
+      data: {
+        consultationId,
+        diagnostic: data.diagnostic,
+        notes: data.notes,
+      },
+    });
+  }
+
+  async addCompteRendu(consultationId: string, data: { titre: string; contenu: string; type: string }) {
+    return this.prisma.compteRendu.create({
+      data: {
+        consultationId,
+        titre: data.titre,
+        contenu: data.contenu,
+        type: data.type,
+      },
+    });
   }
 }

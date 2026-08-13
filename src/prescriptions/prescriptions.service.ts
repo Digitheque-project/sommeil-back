@@ -7,6 +7,7 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
+import { PrismaService } from '../prisma/prisma.service';
 
 export type PolysomnographieItem = {
   id: string;
@@ -25,25 +26,14 @@ export type PolysomnographieItem = {
 export class PrescriptionsService {
   private readonly logger = new Logger(PrescriptionsService.name);
 
-  // Base URL du service prescriptions (sans préfixe ni suffixe) - à configurer via variables d'environnement.
-  // Le code ajoute automatiquement le préfixe de chemin ci-dessous.
-  private readonly PRESCRIPTIONS_BASE_URL = (
-    process.env.PRESCRIPTIONS_URL ||
-    'https://prescriptionback-production.up.railway.app'
-  ).replace(/\/+$/, '');
-
+  // URL de base du service prescriptions (sans préfixe ni suffixe) - à configurer via variables d'environnement.
+  private readonly PRESCRIPTIONS_URL = process.env.PRESCRIPTIONS_URL || 'https://prescriptionback-production.up.railway.app';
   private readonly PRESCRIPTIONS_API_PATH = '/prescriptions/medicale';
-  private readonly POLYSOMNOGRAPHIE_API_PATH =
-    '/prescriptions/polysomnographie';
 
-  // Rendez-vous de polysomnographie planifiés via l'interface (stockage mémoire).
-  // À terme, ces planifications devront être persistées côté service prescription.
-  private readonly scheduledPolysomnographies = new Map<
-    string,
-    { rdvDate: string; rdvHeure: string }
-  >();
-
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly prisma: PrismaService
+  ) {}
 
   // URL de base des prescriptions de polysomnographie reçues des services externes.
   // POLYSOMNOGRAPHIE_URL est une base URL (sans préfixe ni suffixe) ; le préfixe
@@ -51,19 +41,38 @@ export class PrescriptionsService {
   private get polysomnographieUrl(): string {
     const configured = process.env.POLYSOMNOGRAPHIE_URL;
     if (configured)
-      return `${configured.replace(/\/+$/, '')}${this.POLYSOMNOGRAPHIE_API_PATH}`;
-    return `${this.PRESCRIPTIONS_BASE_URL}${this.POLYSOMNOGRAPHIE_API_PATH}`;
+      return `${configured.replace(/\/+$/, '')}/prescriptions/polysomnographie`;
+    return `${this.PRESCRIPTIONS_URL}/prescriptions/polysomnographie`;
   }
-
   private isConnectionError(error: any): boolean {
     if (error instanceof AxiosError) {
+      const status = error.response?.status;
       return (
         error.code === 'ECONNREFUSED' ||
         error.code === 'ECONNRESET' ||
-        error.response?.status === 401
+        error.code === 'ECONNABORTED' ||
+        error.code === 'ETIMEDOUT' ||
+        status === 401 ||
+        status === 403 ||
+        status === 404 ||
+        (status !== undefined && status >= 500)
       );
     }
     return false;
+  }
+
+  private async getPlanificationsSafely(): Promise<Map<string, { rdvDate: Date; rdvHeure: string }>> {
+    try {
+      const planifications = await this.prisma.polysomnographiePlanification.findMany();
+      return new Map(
+        planifications.map((p) => [p.prescriptionId, { rdvDate: p.rdvDate, rdvHeure: p.rdvHeure }]),
+      );
+    } catch (dbError) {
+      this.logger.warn(
+        `Base de données locale indisponible, planifications ignorées: ${dbError}`,
+      );
+      return new Map();
+    }
   }
 
   async getPatientPrescriptions(patientId: string, chuId?: string) {
@@ -72,10 +81,7 @@ export class PrescriptionsService {
       if (chuId) params.chuId = chuId;
 
       const response = await firstValueFrom(
-        this.httpService.get(
-          `${this.PRESCRIPTIONS_BASE_URL}${this.PRESCRIPTIONS_API_PATH}/patient/${patientId}`,
-          { params },
-        ),
+        this.httpService.get(`${this.PRESCRIPTIONS_URL}${this.PRESCRIPTIONS_API_PATH}/patient/${patientId}`, { params }),
       );
 
       return response.data;
@@ -83,7 +89,7 @@ export class PrescriptionsService {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
         this.logger.warn(
-          `Service prescriptions non disponible (${this.PRESCRIPTIONS_BASE_URL}), utilisation des données mockées pour patient ${patientId}`,
+          `Service prescriptions non disponible (${this.PRESCRIPTIONS_URL}), utilisation des données mockées pour patient ${patientId}`,
         );
         return this.getMockPrescriptions();
       }
@@ -94,9 +100,8 @@ export class PrescriptionsService {
     }
   }
 
-  private normalizePolysomnographie(raw: any): PolysomnographieItem {
+  private normalizePolysomnographie(raw: any, scheduledPlanification?: { rdvDate: Date; rdvHeure: string }): PolysomnographieItem {
     const id = String(raw?.id ?? raw?.prescriptionId ?? '');
-    const scheduled = id ? this.scheduledPolysomnographies.get(id) : undefined;
 
     return {
       id,
@@ -109,11 +114,11 @@ export class PrescriptionsService {
         raw?.patient?.firstname ??
         '',
       motif: raw?.motif ?? raw?.contexteClinique ?? raw?.observation ?? '',
-      statut: scheduled ? 'PLANIFIE' : (raw?.statut ?? 'EN_ATTENTE'),
+      statut: scheduledPlanification ? 'PLANIFIE' : (raw?.statut ?? 'EN_ATTENTE'),
       urgence: Boolean(raw?.urgence),
       createdAt: raw?.createdAt ?? new Date().toISOString(),
-      rdvDate: scheduled?.rdvDate ?? raw?.rdvDate ?? null,
-      rdvHeure: scheduled?.rdvHeure ?? raw?.heure ?? raw?.rdvHeure ?? null,
+      rdvDate: scheduledPlanification?.rdvDate.toISOString() ?? raw?.rdvDate ?? null,
+      rdvHeure: scheduledPlanification?.rdvHeure ?? raw?.heure ?? raw?.rdvHeure ?? null,
     };
   }
 
@@ -124,20 +129,28 @@ export class PrescriptionsService {
       );
 
       const list = Array.isArray(response.data) ? response.data : [];
-      return list.map((item: any) => this.normalizePolysomnographie(item));
+
+      // Récupérer les planifications depuis la base de données locale
+      const planificationsMap = await this.getPlanificationsSafely();
+
+      return list.map((item: any) => 
+        this.normalizePolysomnographie(item, planificationsMap.get(String(item?.id ?? item?.prescriptionId)))
+      );
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
         this.logger.warn(
           `Service prescriptions non disponible (${this.polysomnographieUrl}), utilisation des données mockées pour la liste polysomnographie`,
         );
-        return this.getMockPolysomnographies().map((item) =>
-          this.normalizePolysomnographie(item),
+
+        // Même avec les données mockées, essayer de récupérer les planifications
+        const planificationsMap = await this.getPlanificationsSafely();
+
+        return this.getMockPolysomnographies().map((item) => 
+          this.normalizePolysomnographie(item, planificationsMap.get(item.id))
         );
       }
-      this.logger.error(
-        `Erreur lors de la récupération des polysomnographies: ${err.message}`,
-      );
+      this.logger.error(`Erreur lors de la récupération des polysomnographies: ${err.message}`);
       throw error;
     }
   }
@@ -156,15 +169,41 @@ export class PrescriptionsService {
       throw new NotFoundException('Prescription polysomnographie non trouvée');
     }
 
-    this.scheduledPolysomnographies.set(id, {
-      rdvDate: data.rdvDate,
-      rdvHeure: data.rdvHeure ?? target.rdvHeure ?? '20:00',
-    });
+    // Sauvegarder dans la base de données locale
+    try {
+      const planification = await this.prisma.polysomnographiePlanification.upsert({
+        where: { prescriptionId: id },
+        update: {
+          rdvDate: new Date(data.rdvDate),
+          rdvHeure: data.rdvHeure ?? target.rdvHeure ?? '20:00',
+          statut: 'PLANIFIE',
+        },
+        create: {
+          prescriptionId: id,
+          patientId: target.patientId,
+          patientNom: target.patientNom,
+          patientPrenom: target.patientPrenom,
+          motif: target.motif,
+          rdvDate: new Date(data.rdvDate),
+          rdvHeure: data.rdvHeure ?? target.rdvHeure ?? '20:00',
+          statut: 'PLANIFIE',
+          urgence: target.urgence,
+        },
+      });
 
-    return {
-      success: true,
-      ...this.normalizePolysomnographie({ ...target, id }),
-    };
+      return {
+        success: true,
+        ...this.normalizePolysomnographie({ ...target, id, rdvDate: planification.rdvDate.toISOString(), rdvHeure: planification.rdvHeure }),
+      };
+    } catch (dbError) {
+      this.logger.warn(`Erreur base de données locale pour planification: ${dbError}`);
+
+      // Fallback en mémoire (ancien comportement)
+      return {
+        success: true,
+        ...this.normalizePolysomnographie({ ...target, id, rdvDate: data.rdvDate, rdvHeure: data.rdvHeure ?? target.rdvHeure ?? '20:00' }),
+      };
+    }
   }
 
   async updatePrescriptionStatus(
@@ -175,7 +214,7 @@ export class PrescriptionsService {
     try {
       const response = await firstValueFrom(
         this.httpService.put(
-          `${this.PRESCRIPTIONS_BASE_URL}${this.PRESCRIPTIONS_API_PATH}/${id}/statut`,
+          `${this.PRESCRIPTIONS_URL}${this.PRESCRIPTIONS_API_PATH}/${id}/statut`,
           { statut, actionParId },
         ),
       );
@@ -261,5 +300,44 @@ export class PrescriptionsService {
         createdAt: new Date().toISOString(),
       },
     ];
+  }
+
+  // Nouvelles méthodes CRUD pour la base de données locale
+  async getAllPlanifications() {
+    return this.prisma.polysomnographiePlanification.findMany({
+      orderBy: { rdvDate: 'asc' },
+    });
+  }
+
+  async getPlanificationById(id: string) {
+    return this.prisma.polysomnographiePlanification.findUnique({
+      where: { id },
+    });
+  }
+
+  async deletePlanification(id: string) {
+    return this.prisma.polysomnographiePlanification.delete({
+      where: { id },
+    });
+  }
+
+  async createArchive(data: { type: string; referenceId: string; titre: string; description?: string; donnees: any; archivedBy?: string }) {
+    return this.prisma.archive.create({
+      data: {
+        type: data.type,
+        referenceId: data.referenceId,
+        titre: data.titre,
+        description: data.description,
+        donnees: data.donnees,
+        archivedBy: data.archivedBy,
+      },
+    });
+  }
+
+  async getArchives(type?: string) {
+    return this.prisma.archive.findMany({
+      where: type ? { type } : undefined,
+      orderBy: { archivedAt: 'desc' },
+    });
   }
 }

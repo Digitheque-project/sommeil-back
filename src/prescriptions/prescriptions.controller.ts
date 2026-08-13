@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, Query } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -69,5 +69,43 @@ export class PrescriptionsController {
       body.statut,
       body.actionParId,
     );
+  }
+
+  @Get('planifications/all')
+  @ApiOperation({ summary: 'Récupérer toutes les planifications de polysomnographie' })
+  @ApiResponse({ status: 200, description: 'Liste des planifications' })
+  async getAllPlanifications() {
+    return this.prescriptionsService.getAllPlanifications();
+  }
+
+  @Get('planifications/:id')
+  @ApiOperation({ summary: 'Récupérer une planification par ID' })
+  @ApiParam({ name: 'id', description: 'ID de la planification' })
+  @ApiResponse({ status: 200, description: 'Détails de la planification' })
+  async getPlanificationById(@Param('id') id: string) {
+    return this.prescriptionsService.getPlanificationById(id);
+  }
+
+  @Delete('planifications/:id')
+  @ApiOperation({ summary: 'Supprimer une planification' })
+  @ApiParam({ name: 'id', description: 'ID de la planification' })
+  @ApiResponse({ status: 200, description: 'Planification supprimée avec succès' })
+  async deletePlanification(@Param('id') id: string) {
+    return this.prescriptionsService.deletePlanification(id);
+  }
+
+  @Post('archives')
+  @ApiOperation({ summary: 'Créer un archive' })
+  @ApiResponse({ status: 201, description: 'Archive créée avec succès' })
+  async createArchive(@Body() data: { type: string; referenceId: string; titre: string; description?: string; donnees: any; archivedBy?: string }) {
+    return this.prescriptionsService.createArchive(data);
+  }
+
+  @Get('archives')
+  @ApiOperation({ summary: 'Récupérer les archives' })
+  @ApiQuery({ name: 'type', required: false, description: 'Filtrer par type' })
+  @ApiResponse({ status: 200, description: 'Liste des archives' })
+  async getArchives(@Query('type') type?: string) {
+    return this.prescriptionsService.getArchives(type);
   }
 }

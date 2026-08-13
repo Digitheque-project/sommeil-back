@@ -1,12 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Param,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Put, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { ConsultationsService } from './consultations.service';
 
@@ -49,7 +41,7 @@ export class ConsultationsController {
     description: 'Détails de la consultation',
   })
   async getById(@Param('id') id: string) {
-    return this.consultationsService.getConsultationById(+id);
+    return this.consultationsService.getConsultationById(id);
   }
 
   @Post(':id/finalize')
@@ -63,7 +55,7 @@ export class ConsultationsController {
     description: 'Consultation finalisée avec succès',
   })
   async finalizeConsultation(@Param('id') id: string, @Body() data: any) {
-    return this.consultationsService.finalizeConsultation(+id, data);
+    return this.consultationsService.finalizeConsultation(id, data);
   }
 
   @Post(':id/traiter')
@@ -73,7 +65,7 @@ export class ConsultationsController {
       'Actions disponibles : "ouvrir", "annuler", "terminer", "controle"',
   })
   async traiterConsultation(@Param('id') id: string, @Body() data: any) {
-    return this.consultationsService.traiterConsultation(+id, data);
+    return this.consultationsService.traiterConsultation(id, data);
   }
 
   @Get('patient/:patientId/history')
@@ -82,5 +74,65 @@ export class ConsultationsController {
   })
   async getPatientHistory(@Param('patientId') patientId: string) {
     return this.consultationsService.getPatientConsultationHistory(patientId);
+  }
+
+  @Post()
+  @ApiOperation({
+    summary: 'Créer une nouvelle consultation locale',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Consultation créée avec succès',
+  })
+  async createConsultation(@Body() data: any) {
+    return this.consultationsService.createConsultation(data);
+  }
+
+  @Put(':id')
+  @ApiOperation({
+    summary: 'Mettre à jour une consultation',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Consultation mise à jour avec succès',
+  })
+  async updateConsultation(@Param('id') id: string, @Body() data: any) {
+    return this.consultationsService.updateConsultation(id, data);
+  }
+
+  @Post(':id/archive')
+  @ApiOperation({
+    summary: 'Archiver une consultation',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Consultation archivée avec succès',
+  })
+  async archiveConsultation(@Param('id') id: string) {
+    return this.consultationsService.archiveConsultation(id);
+  }
+
+  @Post(':id/observations')
+  @ApiOperation({
+    summary: 'Ajouter une observation à une consultation',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Observation ajoutée avec succès',
+  })
+  async addObservation(@Param('id') id: string, @Body() data: { diagnostic?: string; notes?: string }) {
+    return this.consultationsService.addObservation(id, data);
+  }
+
+  @Post(':id/compte-rendus')
+  @ApiOperation({
+    summary: 'Ajouter un compte-rendu à une consultation',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Compte-rendu ajouté avec succès',
+  })
+  async addCompteRendu(@Param('id') id: string, @Body() data: { titre: string; contenu: string; type: string }) {
+    return this.consultationsService.addCompteRendu(id, data);
   }
 }

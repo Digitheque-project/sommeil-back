@@ -54,3 +54,16 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# AI/Agent tools directories
+.agents/
+.claude/
+.windsurf/
+skills-lock.json
+
+# Prisma generated files (client is generated from node_modules/@prisma/client)
+generated/
+src/prisma/generated/
+
+# Prisma config with sensitive data
+prisma.config.ts
