@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Put, Body, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { ConsultationsService } from './consultations.service';
 
@@ -31,6 +41,25 @@ export class ConsultationsController {
     });
   }
 
+  // Les routes littérales doivent précéder `:id`, sinon Nest les résout comme un ID.
+  @Get('waiting')
+  @ApiOperation({
+    summary: "File d'attente",
+    description: 'Consultations non terminées, urgences en tête. Permission `consultation:list`.',
+  })
+  async getWaiting() {
+    return this.consultationsService.getWaitingConsultations();
+  }
+
+  @Get('controls')
+  @ApiOperation({
+    summary: 'Consultations de contrôle',
+    description: 'Consultations de suivi. Permission `consultation:list`.',
+  })
+  async getControls() {
+    return this.consultationsService.getControlConsultations();
+  }
+
   @Get(':id')
   @ApiOperation({
     summary: 'Obtenir une consultation par ID',
@@ -42,6 +71,27 @@ export class ConsultationsController {
   })
   async getById(@Param('id') id: string) {
     return this.consultationsService.getConsultationById(id);
+  }
+
+  @Patch(':id/arrival')
+  @ApiOperation({
+    summary: "Marquer l'arrivée du patient à l'accueil",
+    description: 'Permission `consultation:treat`.',
+  })
+  async markArrival(
+    @Param('id') id: string,
+    @Body() payload: { arriveeAccueil?: boolean; arriveeAccueilAt?: string | null },
+  ) {
+    return this.consultationsService.markArrival(id, payload);
+  }
+
+  @Patch(':id/control-note')
+  @ApiOperation({
+    summary: "Enregistrer la note d'une consultation de contrôle",
+    description: 'Permission `consultation:treat`.',
+  })
+  async saveControlNote(@Param('id') id: string, @Body() body: { note: string }) {
+    return this.consultationsService.saveControlNote(id, body.note);
   }
 
   @Post(':id/finalize')
@@ -127,6 +177,7 @@ export class ConsultationsController {
   @Post(':id/compte-rendus')
   @ApiOperation({
     summary: 'Ajouter un compte-rendu à une consultation',
+    description: 'Permission `report:create`.',
   })
   @ApiResponse({
     status: 201,
@@ -134,5 +185,22 @@ export class ConsultationsController {
   })
   async addCompteRendu(@Param('id') id: string, @Body() data: { titre: string; contenu: string; type: string }) {
     return this.consultationsService.addCompteRendu(id, data);
+  }
+
+  @Get(':id/compte-rendus')
+  @ApiOperation({
+    summary: "Comptes rendus rattachés à une consultation",
+    description: 'Permission `report:list`.',
+  })
+  async getCompteRendus(@Param('id') id: string) {
+    return this.consultationsService.getCompteRendus(id);
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Supprimer une consultation locale',
+  })
+  async deleteConsultation(@Param('id') id: string) {
+    return this.consultationsService.deleteConsultation(id);
   }
 }

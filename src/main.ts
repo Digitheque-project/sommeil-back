@@ -2,6 +2,15 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
+// En développement, charge le fichier .env local. En production (Render), les
+// variables sont déjà injectées dans l'environnement : l'absence de fichier
+// n'est pas une erreur.
+try {
+  process.loadEnvFile();
+} catch {
+  /* pas de fichier .env : on garde l'environnement tel quel */
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 

@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
@@ -169,23 +174,59 @@ export class ConsultationsService {
     }
   }
 
+  /**
+   * Traduit une action de l'interface en mise à jour locale.
+   * Retourne `null` quand l'action n'a pas d'effet sur la consultation locale
+   * (elle est alors uniquement relayée au service externe).
+   */
+  private buildTraiterUpdate(data: any): Record<string, any> | null {
+    switch (data.action) {
+      case 'ouvrir':
+        return { statut: 'EN_COURS' };
+      case 'terminer':
+        return { statut: 'TERMINE' };
+      case 'annuler':
+        return { statut: 'ANNULE' };
+      case 'reporter':
+        // Le report replace la consultation en attente à la nouvelle date.
+        return {
+          statut: 'EN_ATTENTE',
+          estReport: true,
+          ...(data.nouvelleDate ? { date: new Date(data.nouvelleDate) } : {}),
+          ...(data.nouvelleHeure ? { heure: data.nouvelleHeure } : {}),
+        };
+      case 'controle':
+      case 'hospitalisation':
+      case 'examen':
+        return null;
+      default:
+        throw new BadRequestException(
+          `Action inconnue : ${data.action}. Actions valides : ouvrir, annuler, terminer, controle, examen, hospitalisation, reporter.`,
+        );
+    }
+  }
+
   async traiterConsultation(id: string, data: any) {
+    const updateData = this.buildTraiterUpdate(data);
+
     // Mettre à jour dans la base de données locale
     try {
-      const updateData: any = {};
-      if (data.action === 'ouvrir') {
-        updateData.statut = 'EN_COURS';
-      } else if (data.action === 'terminer') {
-        updateData.statut = 'TERMINE';
-      } else if (data.action === 'annuler') {
-        updateData.statut = 'ANNULE';
+      if (updateData === null) {
+        // Aucune transition de statut : on renvoie la consultation telle quelle
+        // pour que l'interface puisse confirmer la prise en compte.
+        const current = await this.prisma.consultationLocale.findUnique({
+          where: { id },
+        });
+        if (current) {
+          return { success: true, action: data.action, consultation: current };
+        }
+      } else {
+        const consultation = await this.prisma.consultationLocale.update({
+          where: { id },
+          data: updateData,
+        });
+        return { success: true, action: data.action, consultation };
       }
-
-      const consultation = await this.prisma.consultationLocale.update({
-        where: { id },
-        data: updateData,
-      });
-      return consultation;
     } catch (dbError) {
       this.logger.warn(`Erreur base de données locale, tentative API externe: ${dbError}`);
     }
@@ -375,14 +416,129 @@ export class ConsultationsService {
     });
   }
 
-  async addCompteRendu(consultationId: string, data: { titre: string; contenu: string; type: string }) {
+  async addCompteRendu(
+    consultationId: string,
+    data: { titre: string; contenu: string; type: string },
+  ) {
+    const consultation = await this.prisma.consultationLocale.findUnique({
+      where: { id: consultationId },
+    });
+
     return this.prisma.compteRendu.create({
       data: {
         consultationId,
         titre: data.titre,
         contenu: data.contenu,
-        type: data.type,
+        type: data.type ?? 'MEDICAL',
+        patientId: consultation?.patientId,
+        patientNom: consultation
+          ? `${consultation.patientPrenom} ${consultation.patientNom}`.trim()
+          : undefined,
       },
     });
+  }
+
+  async getCompteRendus(consultationId: string) {
+    return this.prisma.compteRendu.findMany({
+      where: { consultationId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /** Consultations du jour dont le patient n'a pas encore été pris en charge. */
+  async getWaitingConsultations() {
+    try {
+      return await this.prisma.consultationLocale.findMany({
+        where: { statut: { in: ['EN_ATTENTE', 'EN_COURS'] }, archived: false },
+        include: { observations: true },
+        orderBy: [{ urgence: 'desc' }, { heure: 'asc' }],
+      });
+    } catch (dbError) {
+      this.logger.warn(`Base locale indisponible pour la file d'attente: ${dbError}`);
+      return this.getMockConsultations().filter(
+        (item) => item.statut !== 'TERMINE',
+      );
+    }
+  }
+
+  /** Consultations de contrôle (suivi d'une consultation initiale). */
+  async getControlConsultations() {
+    try {
+      return await this.prisma.consultationLocale.findMany({
+        where: { typeVisite: 'CONTROLE', archived: false },
+        include: { observations: true },
+        orderBy: { date: 'desc' },
+      });
+    } catch (dbError) {
+      this.logger.warn(`Base locale indisponible pour les contrôles: ${dbError}`);
+      return this.getMockConsultations().filter(
+        (item) => item.typeVisite === 'CONTROLE',
+      );
+    }
+  }
+
+  /** Marque (ou annule) l'arrivée du patient à l'accueil. */
+  async markArrival(
+    id: string,
+    payload: { arriveeAccueil?: boolean; arriveeAccueilAt?: string | null },
+  ) {
+    const arrived = payload.arriveeAccueil ?? true;
+
+    try {
+      const consultation = await this.prisma.consultationLocale.update({
+        where: { id },
+        data: { arriveeAccueil: arrived },
+      });
+      return { success: true, consultation };
+    } catch (dbError) {
+      this.logger.warn(`Base locale indisponible, relais vers l'API externe: ${dbError}`);
+    }
+
+    try {
+      const token = await this.getAuthToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await firstValueFrom(
+        this.httpService.patch(
+          `${this.CONSULTATION_EXTERNE_URL}/consultations/${id}/arrival`,
+          payload,
+          { headers },
+        ),
+      );
+      return response.data;
+    } catch (error) {
+      if (this.isConnectionError(error)) {
+        return { success: true, arriveeAccueil: arrived, mock: true };
+      }
+      throw error;
+    }
+  }
+
+  /** Note libre attachée à une consultation de contrôle. */
+  async saveControlNote(id: string, note: string) {
+    try {
+      const existing = await this.prisma.observation.findFirst({
+        where: { consultationId: id },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (existing) {
+        return await this.prisma.observation.update({
+          where: { id: existing.id },
+          data: { notes: note },
+        });
+      }
+
+      return await this.prisma.observation.create({
+        data: { consultationId: id, notes: note },
+      });
+    } catch (dbError) {
+      this.logger.warn(`Base locale indisponible pour la note de contrôle: ${dbError}`);
+      return { success: true, note, mock: true };
+    }
+  }
+
+  async deleteConsultation(id: string) {
+    await this.prisma.consultationLocale.delete({ where: { id } });
+    return { success: true, id };
   }
 }

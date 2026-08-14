@@ -52,6 +52,12 @@ model CompteRendu {
   titre             String
   contenu           String
   type              String   // 'MEDICAL', 'TECHNIQUE', etc.
+  // 'BROUILLON' tant que le compte rendu est modifiable, 'VALIDE' une fois signé.
+  statut            String   @default("BROUILLON")
+  valideLe          DateTime?
+  validePar         String?
+  patientId         String?
+  patientNom        String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
@@ -65,8 +71,12 @@ model PolysomnographiePlanification {
   motif             String
   rdvDate           DateTime
   rdvHeure          String
+  // 'PLANIFIE' -> 'EN_COURS' (psg:start) -> 'TERMINE' (psg:stop)
   statut            String   @default("PLANIFIE")
   urgence           Boolean  @default(false)
+  demarreLe         DateTime?
+  termineLe         DateTime?
+  salle             String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
@@ -78,6 +88,10 @@ model Archive {
   titre             String
   description       String?
   donnees           Json     // Données sérialisées
+  // Un dossier restauré reste tracé : il sort du registre sans être détruit.
+  restored          Boolean  @default(false)
+  restoredAt        DateTime?
+  restoredBy        String?
   archivedAt        DateTime @default(now())
   archivedBy        String?  // ID de l'utilisateur
 }
