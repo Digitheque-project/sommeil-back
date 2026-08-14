@@ -191,9 +191,15 @@ export class PrescriptionsService {
         },
       });
 
+      // La planification est passée en second argument : sans elle, la réponse
+      // reprenait le statut d'origine (EN_ATTENTE) alors que le rendez-vous
+      // vient d'être posé.
       return {
         success: true,
-        ...this.normalizePolysomnographie({ ...target, id, rdvDate: planification.rdvDate.toISOString(), rdvHeure: planification.rdvHeure }),
+        ...this.normalizePolysomnographie(
+          { ...target, id },
+          { rdvDate: planification.rdvDate, rdvHeure: planification.rdvHeure },
+        ),
       };
     } catch (dbError) {
       this.logger.warn(`Erreur base de données locale pour planification: ${dbError}`);
