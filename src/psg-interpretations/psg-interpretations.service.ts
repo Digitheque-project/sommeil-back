@@ -9,29 +9,9 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export type PsgInterpretationPayload = {
   psgId?: string;
-  iah?: number | null;
-  indexDesaturation?: number | null;
-  spo2Moyenne?: number | null;
-  spo2Min?: number | null;
-  efficaciteSommeil?: number | null;
-  latenceEndormissement?: number | null;
-  latenceRem?: number | null;
-  tempsSommeilTotal?: number | null;
-  severite?: string | null;
-  conclusion?: string;
-  recommandations?: string | null;
+  titre?: string;
+  contenu?: string;
 };
-
-const NUMERIC_FIELDS = [
-  'iah',
-  'indexDesaturation',
-  'spo2Moyenne',
-  'spo2Min',
-  'efficaciteSommeil',
-  'latenceEndormissement',
-  'latenceRem',
-  'tempsSommeilTotal',
-] as const;
 
 @Injectable()
 export class PsgInterpretationsService {
@@ -45,14 +25,6 @@ export class PsgInterpretationsService {
         'Cette interprétation est validée et signée : elle ne peut plus être modifiée ni supprimée.',
       );
     }
-  }
-
-  private pickNumericFields(data: PsgInterpretationPayload) {
-    const result: Record<string, number | null> = {};
-    for (const field of NUMERIC_FIELDS) {
-      if (data[field] !== undefined) result[field] = data[field] ?? null;
-    }
-    return result;
   }
 
   async findAll(filters: { statut?: string; psgId?: string; patientId?: string }) {
@@ -81,8 +53,8 @@ export class PsgInterpretationsService {
     if (!data.psgId) {
       throw new BadRequestException('psgId est requis');
     }
-    if (!data.conclusion?.trim()) {
-      throw new BadRequestException("La conclusion de l'interprétation est requise");
+    if (!data.contenu?.trim()) {
+      throw new BadRequestException("Le contenu de l'interprétation est requis");
     }
 
     const exam = await this.prisma.polysomnographiePlanification.findUnique({
@@ -108,10 +80,8 @@ export class PsgInterpretationsService {
         patientId: exam.patientId,
         patientNom: exam.patientNom,
         patientPrenom: exam.patientPrenom,
-        conclusion: data.conclusion,
-        recommandations: data.recommandations ?? undefined,
-        severite: data.severite ?? undefined,
-        ...this.pickNumericFields(data),
+        titre: data.titre?.trim() || `Interprétation PSG — ${exam.patientPrenom} ${exam.patientNom}`,
+        contenu: data.contenu,
       },
     });
   }
@@ -123,10 +93,8 @@ export class PsgInterpretationsService {
     return this.prisma.psgInterpretation.update({
       where: { id },
       data: {
-        ...(data.conclusion !== undefined ? { conclusion: data.conclusion } : {}),
-        ...(data.recommandations !== undefined ? { recommandations: data.recommandations } : {}),
-        ...(data.severite !== undefined ? { severite: data.severite } : {}),
-        ...this.pickNumericFields(data),
+        ...(data.titre !== undefined ? { titre: data.titre } : {}),
+        ...(data.contenu !== undefined ? { contenu: data.contenu } : {}),
       },
     });
   }
@@ -134,8 +102,8 @@ export class PsgInterpretationsService {
   async validate(id: string, validePar?: string) {
     const existing = await this.findOne(id);
     if (existing.statut === 'VALIDE') return existing;
-    if (!existing.conclusion?.trim()) {
-      throw new BadRequestException('Une interprétation sans conclusion ne peut pas être validée.');
+    if (!existing.contenu?.trim()) {
+      throw new BadRequestException('Une interprétation vide ne peut pas être validée.');
     }
 
     return this.prisma.psgInterpretation.update({
@@ -164,18 +132,9 @@ export class PsgInterpretationsService {
 
     return {
       id: interpretation.id,
+      titre: interpretation.titre,
+      contenu: interpretation.contenu,
       statut: interpretation.statut,
-      iah: interpretation.iah,
-      indexDesaturation: interpretation.indexDesaturation,
-      spo2Moyenne: interpretation.spo2Moyenne,
-      spo2Min: interpretation.spo2Min,
-      efficaciteSommeil: interpretation.efficaciteSommeil,
-      latenceEndormissement: interpretation.latenceEndormissement,
-      latenceRem: interpretation.latenceRem,
-      tempsSommeilTotal: interpretation.tempsSommeilTotal,
-      severite: interpretation.severite,
-      conclusion: interpretation.conclusion,
-      recommandations: interpretation.recommandations,
       valideLe: interpretation.valideLe,
       validePar: interpretation.validePar,
       genereLe: new Date().toISOString(),
