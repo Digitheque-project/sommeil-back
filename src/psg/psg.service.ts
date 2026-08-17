@@ -5,12 +5,16 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { ArchivesService } from '../archives/archives.service';
 
 @Injectable()
 export class PsgService {
   private readonly logger = new Logger(PsgService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly archivesService: ArchivesService,
+  ) {}
 
   /**
    * Les examens sont identifiés soit par l'ID de la planification locale, soit
@@ -96,6 +100,11 @@ export class PsgService {
     });
   }
 
+  /**
+   * Un examen supprimé n'est jamais détruit sans trace : la date de début et
+   * la date de fin de l'enregistrement (démarreLe/termineLe) sont scellées
+   * dans le registre des archives avant la suppression de la planification.
+   */
   async remove(id: string) {
     const exam = await this.findExam(id);
     if (exam.statut === 'EN_COURS') {
@@ -103,6 +112,29 @@ export class PsgService {
         "Arrêtez l'enregistrement avant de supprimer cet examen.",
       );
     }
+
+    await this.archivesService.create({
+      type: 'POLYSOMNOGRAPHIE',
+      referenceId: exam.id,
+      titre: `PSG — ${exam.patientPrenom} ${exam.patientNom}`,
+      description: exam.motif,
+      donnees: {
+        id: exam.id,
+        prescriptionId: exam.prescriptionId,
+        patientId: exam.patientId,
+        patientNom: exam.patientNom,
+        patientPrenom: exam.patientPrenom,
+        motif: exam.motif,
+        statut: exam.statut,
+        urgence: exam.urgence,
+        rdvDate: exam.rdvDate,
+        rdvHeure: exam.rdvHeure,
+        salle: exam.salle,
+        demarreLe: exam.demarreLe,
+        termineLe: exam.termineLe,
+        createdAt: exam.createdAt,
+      },
+    });
 
     await this.prisma.polysomnographiePlanification.delete({ where: { id: exam.id } });
     return { success: true, id: exam.id };
