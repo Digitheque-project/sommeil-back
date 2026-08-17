@@ -6,6 +6,7 @@ import { PrescriptionsModule } from './prescriptions/prescriptions.module';
 import { ComptesRendusModule } from './comptes-rendus/comptes-rendus.module';
 import { ArchivesModule } from './archives/archives.module';
 import { PsgModule } from './psg/psg.module';
+import { PsgInterpretationsModule } from './psg-interpretations/psg-interpretations.module';
 import { StatsModule } from './stats/stats.module';
 import { ServicesModule } from './services/services.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -18,6 +19,7 @@ import { PrismaModule } from './prisma/prisma.module';
     ComptesRendusModule,
     ArchivesModule,
     PsgModule,
+    PsgInterpretationsModule,
     StatsModule,
     ServicesModule,
   ],

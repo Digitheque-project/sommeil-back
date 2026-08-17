@@ -79,6 +79,36 @@ model PolysomnographiePlanification {
   salle             String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  interpretation    PsgInterpretation?
+}
+
+model PsgInterpretation {
+  id                    String   @id @default(cuid())
+  psgId                 String   @unique
+  psg                   PolysomnographiePlanification @relation(fields: [psgId], references: [id], onDelete: Cascade)
+  patientId             String
+  patientNom            String
+  patientPrenom         String
+  // Indice d'apnées-hypopnées par heure — détermine la sévérité du SAOS.
+  iah                   Float?
+  indexDesaturation     Float?
+  spo2Moyenne           Float?
+  spo2Min               Float?
+  efficaciteSommeil     Float?
+  latenceEndormissement Int?
+  latenceRem            Int?
+  tempsSommeilTotal     Int?
+  // 'NORMAL' | 'LEGER' | 'MODERE' | 'SEVERE'
+  severite              String?
+  conclusion            String
+  recommandations       String?
+  // 'BROUILLON' tant que modifiable, 'VALIDE' une fois signée.
+  statut                String   @default("BROUILLON")
+  valideLe              DateTime?
+  validePar             String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
 
 model Archive {
