@@ -10,6 +10,7 @@ import { PsgInterpretationsModule } from './psg-interpretations/psg-interpretati
 import { StatsModule } from './stats/stats.module';
 import { ServicesModule } from './services/services.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PlanningModule } from './planning/planning.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { PrismaModule } from './prisma/prisma.module';
     PsgInterpretationsModule,
     StatsModule,
     ServicesModule,
+    PlanningModule,
   ],
   controllers: [AppController],
   providers: [AppService],
