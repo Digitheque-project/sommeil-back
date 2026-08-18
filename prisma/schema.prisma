@@ -108,7 +108,7 @@ model RendezVousPlanning {
   patientPrenom     String
   patientDossier    String?
   motif             String?
-  priorite          String   @default("NORMALE") // STAT | URGENTE | NORMALE
+  priorite          String   @default("NORMALE") // TRES_URGENTE | URGENTE | NORMALE
   statut            String   @default("EN_ATTENTE") // EN_ATTENTE | REALISE | NON_REALISE | ANNULE
   dateRdv           DateTime
   heureDebut        String
