@@ -24,13 +24,15 @@ export class ComptesRendusController {
   @ApiQuery({ name: 'statut', required: false, description: 'BROUILLON ou VALIDE' })
   @ApiQuery({ name: 'patientId', required: false })
   @ApiQuery({ name: 'consultationId', required: false })
+  @ApiQuery({ name: 'psgId', required: false })
   @ApiResponse({ status: 200, description: 'Liste des comptes rendus' })
   async findAll(
     @Query('statut') statut?: string,
     @Query('patientId') patientId?: string,
     @Query('consultationId') consultationId?: string,
+    @Query('psgId') psgId?: string,
   ) {
-    return this.comptesRendusService.findAll({ statut, patientId, consultationId });
+    return this.comptesRendusService.findAll({ statut, patientId, consultationId, psgId });
   }
 
   @Post()

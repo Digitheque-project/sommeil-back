@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export type CompteRenduPayload = {
   consultationId?: string;
+  psgId?: string;
   titre?: string;
   contenu?: string;
   type?: string;
@@ -31,11 +32,17 @@ export class ComptesRendusService {
     }
   }
 
-  async findAll(filters: { statut?: string; patientId?: string; consultationId?: string }) {
+  async findAll(filters: {
+    statut?: string;
+    patientId?: string;
+    consultationId?: string;
+    psgId?: string;
+  }) {
     const where: Record<string, any> = {};
     if (filters.statut) where.statut = filters.statut;
     if (filters.patientId) where.patientId = filters.patientId;
     if (filters.consultationId) where.consultationId = filters.consultationId;
+    if (filters.psgId) where.psgId = filters.psgId;
 
     return this.prisma.compteRendu.findMany({
       where,
@@ -50,21 +57,34 @@ export class ComptesRendusService {
   }
 
   async create(data: CompteRenduPayload) {
-    if (!data.consultationId) {
-      throw new BadRequestException('consultationId est requis');
+    if (!data.psgId && !data.consultationId) {
+      throw new BadRequestException('psgId (ou consultationId) est requis');
     }
     if (!data.contenu?.trim()) {
       throw new BadRequestException('Le contenu du compte rendu est requis');
     }
 
+    let patientId = data.patientId;
+    let patientNom = data.patientNom;
+
+    if (data.psgId && (!patientId || !patientNom)) {
+      const exam = await this.prisma.polysomnographiePlanification.findUnique({
+        where: { id: data.psgId },
+      });
+      if (!exam) throw new NotFoundException('Examen PSG non trouvé');
+      patientId = patientId ?? exam.patientId;
+      patientNom = patientNom ?? `${exam.patientPrenom} ${exam.patientNom}`.trim();
+    }
+
     return this.prisma.compteRendu.create({
       data: {
         consultationId: data.consultationId,
+        psgId: data.psgId,
         titre: data.titre?.trim() || 'Compte rendu',
         contenu: data.contenu,
         type: data.type ?? 'MEDICAL',
-        patientId: data.patientId,
-        patientNom: data.patientNom,
+        patientId,
+        patientNom,
       },
     });
   }
@@ -110,9 +130,18 @@ export class ComptesRendusService {
    */
   async exportOne(id: string) {
     const compteRendu = await this.findOne(id);
-    const consultation = await this.prisma.consultationLocale
-      .findUnique({ where: { id: compteRendu.consultationId } })
-      .catch(() => null);
+
+    const consultation = compteRendu.consultationId
+      ? await this.prisma.consultationLocale
+          .findUnique({ where: { id: compteRendu.consultationId } })
+          .catch(() => null)
+      : null;
+
+    const exam = compteRendu.psgId
+      ? await this.prisma.polysomnographiePlanification
+          .findUnique({ where: { id: compteRendu.psgId } })
+          .catch(() => null)
+      : null;
 
     return {
       id: compteRendu.id,
@@ -124,12 +153,14 @@ export class ComptesRendusService {
       validePar: compteRendu.validePar,
       genereLe: new Date().toISOString(),
       patient: {
-        id: compteRendu.patientId ?? consultation?.patientId ?? null,
+        id: compteRendu.patientId ?? consultation?.patientId ?? exam?.patientId ?? null,
         nom:
           compteRendu.patientNom ??
           (consultation
             ? `${consultation.patientPrenom} ${consultation.patientNom}`.trim()
-            : null),
+            : exam
+              ? `${exam.patientPrenom} ${exam.patientNom}`.trim()
+              : null),
         dossier: consultation?.patientDossier ?? null,
       },
       consultation: consultation
@@ -138,6 +169,15 @@ export class ComptesRendusService {
             date: consultation.date,
             heure: consultation.heure,
             motif: consultation.motif,
+          }
+        : null,
+      examen: exam
+        ? {
+            id: exam.id,
+            rdvDate: exam.rdvDate,
+            rdvHeure: exam.rdvHeure,
+            motif: exam.motif,
+            termineLe: exam.termineLe,
           }
         : null,
     };

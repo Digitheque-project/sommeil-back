@@ -47,8 +47,14 @@ model Observation {
 
 model CompteRendu {
   id                String   @id @default(cuid())
-  consultationId     String
-  consultationLocale ConsultationLocale @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  // Historique : les tout premiers comptes rendus étaient rattachés à une
+  // consultation. Le flux courant les rattache à l'examen PSG terminé
+  // (psgId) ; les deux champs restent optionnels pour ne pas casser les
+  // enregistrements existants.
+  consultationId     String?
+  consultationLocale ConsultationLocale? @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  psgId             String?
+  psg               PolysomnographiePlanification? @relation(fields: [psgId], references: [id], onDelete: Cascade)
   titre             String
   contenu           String
   type              String   // 'MEDICAL', 'TECHNIQUE', etc.
@@ -81,6 +87,7 @@ model PolysomnographiePlanification {
   updatedAt         DateTime @updatedAt
 
   interpretation    PsgInterpretation?
+  compteRendus      CompteRendu[]
 }
 
 model PsgInterpretation {
