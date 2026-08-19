@@ -11,6 +11,7 @@ import { StatsModule } from './stats/stats.module';
 import { ServicesModule } from './services/services.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PlanningModule } from './planning/planning.module';
+import { UploadsModule } from './uploads/uploads.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { PlanningModule } from './planning/planning.module';
     StatsModule,
     ServicesModule,
     PlanningModule,
+    UploadsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

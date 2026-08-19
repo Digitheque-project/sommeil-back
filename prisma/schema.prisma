@@ -12,130 +12,134 @@ datasource db {
 }
 
 model ConsultationLocale {
-  id                String   @id @default(cuid())
-  consultationId    String   @unique // ID du service externe
-  date              DateTime
-  heure             String
-  motif             String
-  statut            String
-  typeVisite        String
-  urgence           Boolean  @default(false)
-  arriveeAccueil    Boolean  @default(false)
-  estReport         Boolean  @default(false)
-  patientId         String
-  patientNom        String
-  patientPrenom     String
-  patientDossier    String?
-  medecinId         String?
-  archived          Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  
-  observations      Observation[]
-  compteRendus      CompteRendu[]
+  id             String   @id @default(cuid())
+  consultationId String   @unique // ID du service externe
+  date           DateTime
+  heure          String
+  motif          String
+  statut         String
+  typeVisite     String
+  urgence        Boolean  @default(false)
+  arriveeAccueil Boolean  @default(false)
+  estReport      Boolean  @default(false)
+  patientId      String
+  patientNom     String
+  patientPrenom  String
+  patientDossier String?
+  medecinId      String?
+  archived       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  observations Observation[]
+  compteRendus CompteRendu[]
 }
 
 model Observation {
-  id                String   @id @default(cuid())
+  id                 String             @id @default(cuid())
   consultationId     String
   consultationLocale ConsultationLocale @relation(fields: [consultationId], references: [id], onDelete: Cascade)
-  diagnostic        String?
-  notes             String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  diagnostic         String?
+  notes              String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 }
 
 model CompteRendu {
-  id                String   @id @default(cuid())
+  id                 String                         @id @default(cuid())
   // Historique : les tout premiers comptes rendus étaient rattachés à une
   // consultation. Le flux courant les rattache à l'examen PSG terminé
   // (psgId) ; les deux champs restent optionnels pour ne pas casser les
   // enregistrements existants.
   consultationId     String?
-  consultationLocale ConsultationLocale? @relation(fields: [consultationId], references: [id], onDelete: Cascade)
-  psgId             String?
-  psg               PolysomnographiePlanification? @relation(fields: [psgId], references: [id], onDelete: Cascade)
-  titre             String
-  contenu           String
-  type              String   // 'MEDICAL', 'TECHNIQUE', etc.
+  consultationLocale ConsultationLocale?            @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  psgId              String?
+  psg                PolysomnographiePlanification? @relation(fields: [psgId], references: [id], onDelete: Cascade)
+  titre              String
+  contenu            String
+  // Texte libre de conclusion, distinct du corps du compte rendu.
+  conclusion         String?
+  // URL de la photo importée (service-upload), servie telle quelle par l'export.
+  photoUrl           String?
+  type               String // 'MEDICAL', 'TECHNIQUE', etc.
   // 'BROUILLON' tant que le compte rendu est modifiable, 'VALIDE' une fois signé.
-  statut            String   @default("BROUILLON")
-  valideLe          DateTime?
-  validePar         String?
-  patientId         String?
-  patientNom        String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  statut             String                         @default("BROUILLON")
+  valideLe           DateTime?
+  validePar          String?
+  patientId          String?
+  patientNom         String?
+  createdAt          DateTime                       @default(now())
+  updatedAt          DateTime                       @updatedAt
 }
 
 model PolysomnographiePlanification {
-  id                String   @id @default(cuid())
-  prescriptionId    String   @unique // ID du service externe
-  patientId         String
-  patientNom        String
-  patientPrenom     String
-  motif             String
-  rdvDate           DateTime
-  rdvHeure          String
+  id             String    @id @default(cuid())
+  prescriptionId String    @unique // ID du service externe
+  patientId      String
+  patientNom     String
+  patientPrenom  String
+  motif          String
+  rdvDate        DateTime
+  rdvHeure       String
   // 'PLANIFIE' -> 'EN_COURS' (psg:start) -> 'TERMINE' (psg:stop)
-  statut            String   @default("PLANIFIE")
-  urgence           Boolean  @default(false)
-  demarreLe         DateTime?
-  termineLe         DateTime?
-  salle             String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  statut         String    @default("PLANIFIE")
+  urgence        Boolean   @default(false)
+  demarreLe      DateTime?
+  termineLe      DateTime?
+  salle          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  interpretation    PsgInterpretation?
-  compteRendus      CompteRendu[]
+  interpretation PsgInterpretation?
+  compteRendus   CompteRendu[]
 }
 
 model PsgInterpretation {
-  id                    String   @id @default(cuid())
-  psgId                 String   @unique
-  psg                   PolysomnographiePlanification @relation(fields: [psgId], references: [id], onDelete: Cascade)
-  patientId             String
-  patientNom            String
-  patientPrenom         String
-  titre                 String
+  id            String                        @id @default(cuid())
+  psgId         String                        @unique
+  psg           PolysomnographiePlanification @relation(fields: [psgId], references: [id], onDelete: Cascade)
+  patientId     String
+  patientNom    String
+  patientPrenom String
+  titre         String
   // Texte libre rédigé par le médecin : pas de champs cliniques structurés imposés.
-  contenu               String
+  contenu       String
   // 'BROUILLON' tant que modifiable, 'VALIDE' une fois signée.
-  statut                String   @default("BROUILLON")
-  valideLe              DateTime?
-  validePar             String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  statut        String                        @default("BROUILLON")
+  valideLe      DateTime?
+  validePar     String?
+  createdAt     DateTime                      @default(now())
+  updatedAt     DateTime                      @updatedAt
 }
 
 model RendezVousPlanning {
-  id                String   @id @default(cuid())
-  patientId         String
-  patientNom        String
-  patientPrenom     String
-  patientDossier    String?
-  motif             String?
-  priorite          String   @default("NORMALE") // TRES_URGENTE | URGENTE | NORMALE
-  statut            String   @default("EN_ATTENTE") // EN_ATTENTE | REALISE | NON_REALISE | ANNULE
-  dateRdv           DateTime
-  heureDebut        String
-  heureFin          String
-  dureeMinutes      Int      @default(60)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id             String   @id @default(cuid())
+  patientId      String
+  patientNom     String
+  patientPrenom  String
+  patientDossier String?
+  motif          String?
+  priorite       String   @default("NORMALE") // TRES_URGENTE | URGENTE | NORMALE
+  statut         String   @default("EN_ATTENTE") // EN_ATTENTE | REALISE | NON_REALISE | ANNULE
+  dateRdv        DateTime
+  heureDebut     String
+  heureFin       String
+  dureeMinutes   Int      @default(60)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 model Archive {
-  id                String   @id @default(cuid())
-  type              String   // 'CONSULTATION', 'PRESCRIPTION', etc.
-  referenceId       String   // ID de l'entité archivée
-  titre             String
-  description       String?
-  donnees           Json     // Données sérialisées
+  id          String    @id @default(cuid())
+  type        String // 'CONSULTATION', 'PRESCRIPTION', etc.
+  referenceId String // ID de l'entité archivée
+  titre       String
+  description String?
+  donnees     Json // Données sérialisées
   // Un dossier restauré reste tracé : il sort du registre sans être détruit.
-  restored          Boolean  @default(false)
-  restoredAt        DateTime?
-  restoredBy        String?
-  archivedAt        DateTime @default(now())
-  archivedBy        String?  // ID de l'utilisateur
+  restored    Boolean   @default(false)
+  restoredAt  DateTime?
+  restoredBy  String?
+  archivedAt  DateTime  @default(now())
+  archivedBy  String? // ID de l'utilisateur
 }

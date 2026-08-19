@@ -12,6 +12,8 @@ export type CompteRenduPayload = {
   psgId?: string;
   titre?: string;
   contenu?: string;
+  conclusion?: string;
+  photoUrl?: string;
   type?: string;
   patientId?: string;
   patientNom?: string;
@@ -82,6 +84,8 @@ export class ComptesRendusService {
         psgId: data.psgId,
         titre: data.titre?.trim() || 'Compte rendu',
         contenu: data.contenu,
+        conclusion: data.conclusion?.trim() || undefined,
+        photoUrl: data.photoUrl,
         type: data.type ?? 'MEDICAL',
         patientId,
         patientNom,
@@ -98,6 +102,8 @@ export class ComptesRendusService {
       data: {
         ...(data.titre !== undefined ? { titre: data.titre } : {}),
         ...(data.contenu !== undefined ? { contenu: data.contenu } : {}),
+        ...(data.conclusion !== undefined ? { conclusion: data.conclusion } : {}),
+        ...(data.photoUrl !== undefined ? { photoUrl: data.photoUrl } : {}),
         ...(data.type !== undefined ? { type: data.type } : {}),
       },
     });
@@ -147,6 +153,8 @@ export class ComptesRendusService {
       id: compteRendu.id,
       titre: compteRendu.titre,
       contenu: compteRendu.contenu,
+      conclusion: compteRendu.conclusion,
+      photoUrl: compteRendu.photoUrl,
       type: compteRendu.type,
       statut: compteRendu.statut,
       valideLe: compteRendu.valideLe,
