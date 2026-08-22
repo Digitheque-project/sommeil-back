@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Param, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Body, Query, Headers } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -24,22 +24,36 @@ export class PrescriptionsController {
   async getPatientPrescriptions(
     @Param('patientId') patientId: string,
     @Query('chuId') chuId?: string,
+    @Headers('authorization') authorization?: string,
   ) {
-    return this.prescriptionsService.getPatientPrescriptions(patientId, chuId);
+    return this.prescriptionsService.getPatientPrescriptions(
+      patientId,
+      chuId,
+      authorization,
+    );
   }
 
   @Get('polysomnographie')
   @ApiOperation({
     summary:
-      'Récupérer toutes les prescriptions de polysomnographie reçues des services externes',
+      'Prescriptions de polysomnographie adressées au Centre de Sommeil',
+    description:
+      "Relaie le service prescriptions en filtrant sur le CHU (`CHU_ID`) et sur le " +
+      "service destinataire. L'identifiant du service est résolu depuis l'annuaire " +
+      '(`GET /services?chuId=`) ou fixé par `SLEEP_SERVICE_ID`. Le jeton porteur de ' +
+      "l'appelant est relayé : sans lui, le service prescriptions répond 401.",
   })
   @ApiResponse({
     status: 200,
     description:
       'Liste des prescriptions de polysomnographie avec leur état de planification',
   })
-  async getPolysomnographies() {
-    return this.prescriptionsService.getPolysomnographiePrescriptions();
+  async getPolysomnographies(
+    @Headers('authorization') authorization?: string,
+  ) {
+    return this.prescriptionsService.getPolysomnographiePrescriptions(
+      authorization,
+    );
   }
 
   @Post('polysomnographie/:id/schedule')
@@ -63,11 +77,13 @@ export class PrescriptionsController {
   async updatePrescriptionStatus(
     @Param('id') id: string,
     @Body() body: { statut: string; actionParId?: string },
+    @Headers('authorization') authorization?: string,
   ) {
     return this.prescriptionsService.updatePrescriptionStatus(
       id,
       body.statut,
       body.actionParId,
+      authorization,
     );
   }
 

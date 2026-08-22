@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -31,10 +33,93 @@ export class PrescriptionsService {
   private readonly PRESCRIPTIONS_URL = process.env.PRESCRIPTIONS_URL || 'https://prescriptionback-production.up.railway.app';
   private readonly PRESCRIPTIONS_API_PATH = '/prescriptions/medicale';
 
+  // Établissement du Centre de Sommeil. Sert à ne remonter que les
+  // prescriptions de ce CHU, et à retrouver l'identifiant du service.
+  private readonly CHU_ID =
+    process.env.CHU_ID || '1e5bbbb7-fa10-4d59-8848-2d0ce96a9394';
+
+  // Identifiant du service Centre de Sommeil dans l'annuaire du CHU.
+  // Laissé vide, il est résolu à la volée par nom via GET /services?chuId=.
+  private readonly SLEEP_SERVICE_ID = process.env.SLEEP_SERVICE_ID?.trim() || '';
+  private readonly SLEEP_SERVICE_NAME =
+    process.env.SLEEP_SERVICE_NAME?.trim() || 'sommeil';
+
+  /** Identifiant résolu, mémorisé pour la durée de vie du processus. */
+  private resolvedSleepServiceId: string | null = null;
+
   constructor(
     private readonly httpService: HttpService,
     private readonly prisma: PrismaService
   ) {}
+
+  /**
+   * Le service prescriptions et l'annuaire exigent un jeton porteur : on
+   * relaie celui de l'appelant, tel qu'il arrive sur sommeil-back.
+   */
+  private authHeaders(authorization?: string): Record<string, string> {
+    if (!authorization) return {};
+    const value = authorization.toLowerCase().startsWith('bearer ')
+      ? authorization
+      : `Bearer ${authorization}`;
+    return { Authorization: value };
+  }
+
+  /**
+   * Identifiant du service Centre de Sommeil dans l'annuaire du CHU.
+   *
+   * Le service prescriptions expose l'annuaire sur `GET /services?chuId=` et
+   * renvoie `{ serviceId, name, type, isActive, chuId }`. On y cherche le
+   * service dont le nom contient `SLEEP_SERVICE_NAME` ; `SLEEP_SERVICE_ID`
+   * court-circuite entièrement cette résolution.
+   *
+   * Renvoie `null` si l'annuaire est injoignable ou si aucun service ne
+   * correspond : l'appelant retombe alors sur un filtrage par CHU seul,
+   * plutôt que de n'afficher aucune prescription.
+   */
+  private async resolveSleepServiceId(
+    authorization?: string,
+  ): Promise<string | null> {
+    if (this.SLEEP_SERVICE_ID) return this.SLEEP_SERVICE_ID;
+    if (this.resolvedSleepServiceId) return this.resolvedSleepServiceId;
+
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.PRESCRIPTIONS_URL}/services`, {
+          params: { chuId: this.CHU_ID },
+          headers: this.authHeaders(authorization),
+          timeout: 8000,
+        }),
+      );
+
+      const services = Array.isArray(response.data) ? response.data : [];
+      const needle = this.SLEEP_SERVICE_NAME.toLowerCase();
+      const match = services.find((service: any) =>
+        String(service?.name ?? service?.nom ?? '')
+          .toLowerCase()
+          .includes(needle),
+      );
+
+      const id = match?.serviceId ?? match?.id;
+      if (!id) {
+        this.logger.warn(
+          `Aucun service correspondant à « ${this.SLEEP_SERVICE_NAME} » dans l'annuaire du CHU ${this.CHU_ID} ` +
+            `(${services.length} service(s) listé(s)). Filtrage par CHU uniquement.`,
+        );
+        return null;
+      }
+
+      this.resolvedSleepServiceId = String(id);
+      this.logger.log(
+        `Service Centre de Sommeil résolu : ${this.resolvedSleepServiceId}`,
+      );
+      return this.resolvedSleepServiceId;
+    } catch (error) {
+      this.logger.warn(
+        `Annuaire des services injoignable pour le CHU ${this.CHU_ID}, filtrage par CHU uniquement: ${error}`,
+      );
+      return null;
+    }
+  }
 
   // URL de base des prescriptions de polysomnographie reçues des services externes.
   // POLYSOMNOGRAPHIE_URL est une base URL (sans préfixe ni suffixe) ; le préfixe
@@ -45,6 +130,25 @@ export class PrescriptionsService {
       return `${configured.replace(/\/+$/, '')}/prescriptions/polysomnographie`;
     return `${this.PRESCRIPTIONS_URL}/prescriptions/polysomnographie`;
   }
+  /**
+   * Un 401/403 du service prescriptions n'est pas une panne : c'est le jeton
+   * relayé qui manque ou ne donne pas accès. Le distinguer évite d'afficher
+   * « service indisponible » sur un simple problème de session.
+   */
+  private assertNotAuthFailure(error: unknown, what: string): void {
+    const status = (error as AxiosError)?.response?.status;
+    if (status === 401) {
+      throw new UnauthorizedException(
+        `Session expirée ou jeton absent : ${what} n'a pas pu être consulté.`,
+      );
+    }
+    if (status === 403) {
+      throw new ForbiddenException(
+        `Droits insuffisants sur le service prescriptions : ${what}.`,
+      );
+    }
+  }
+
   private isConnectionError(error: any): boolean {
     if (error instanceof AxiosError) {
       const status = error.response?.status;
@@ -76,18 +180,25 @@ export class PrescriptionsService {
     }
   }
 
-  async getPatientPrescriptions(patientId: string, chuId?: string) {
+  async getPatientPrescriptions(
+    patientId: string,
+    chuId?: string,
+    authorization?: string,
+  ) {
     try {
-      const params: any = {};
-      if (chuId) params.chuId = chuId;
+      const params: any = { chuId: chuId || this.CHU_ID };
 
       const response = await firstValueFrom(
-        this.httpService.get(`${this.PRESCRIPTIONS_URL}${this.PRESCRIPTIONS_API_PATH}/patient/${patientId}`, { params }),
+        this.httpService.get(
+          `${this.PRESCRIPTIONS_URL}${this.PRESCRIPTIONS_API_PATH}/patient/${patientId}`,
+          { params, headers: this.authHeaders(authorization), timeout: 8000 },
+        ),
       );
 
       return response.data;
     } catch (error) {
       const err = error as AxiosError;
+      this.assertNotAuthFailure(error, 'les prescriptions du patient');
       if (this.isConnectionError(error)) {
         this.logger.error(
           `Service prescriptions injoignable (${this.PRESCRIPTIONS_URL}) pour le patient ${patientId}`,
@@ -125,10 +236,26 @@ export class PrescriptionsService {
     };
   }
 
-  async getPolysomnographiePrescriptions() {
+  /**
+   * Prescriptions de polysomnographie adressées au Centre de Sommeil.
+   *
+   * Le service prescriptions filtre sur `chuId` et `serviceIdDest` (service
+   * destinataire). Sans `serviceIdDest`, la liste contiendrait aussi les
+   * demandes adressées aux autres services du CHU.
+   */
+  async getPolysomnographiePrescriptions(authorization?: string) {
     try {
+      const serviceIdDest = await this.resolveSleepServiceId(authorization);
+
       const response = await firstValueFrom(
-        this.httpService.get(this.polysomnographieUrl, { timeout: 8000 }),
+        this.httpService.get(this.polysomnographieUrl, {
+          params: {
+            chuId: this.CHU_ID,
+            ...(serviceIdDest ? { serviceIdDest } : {}),
+          },
+          headers: this.authHeaders(authorization),
+          timeout: 8000,
+        }),
       );
 
       const list = Array.isArray(response.data) ? response.data : [];
@@ -141,6 +268,10 @@ export class PrescriptionsService {
       );
     } catch (error) {
       const err = error as AxiosError;
+      this.assertNotAuthFailure(
+        error,
+        'la liste des prescriptions de polysomnographie',
+      );
       if (this.isConnectionError(error)) {
         this.logger.error(
           `Service prescriptions injoignable (${this.polysomnographieUrl}) pour la liste polysomnographie`,
@@ -215,18 +346,21 @@ export class PrescriptionsService {
     id: string,
     statut: string,
     actionParId?: string,
+    authorization?: string,
   ) {
     try {
       const response = await firstValueFrom(
         this.httpService.put(
           `${this.PRESCRIPTIONS_URL}${this.PRESCRIPTIONS_API_PATH}/${id}/statut`,
           { statut, actionParId },
+          { headers: this.authHeaders(authorization), timeout: 8000 },
         ),
       );
 
       return response.data;
     } catch (error) {
       const err = error as AxiosError;
+      this.assertNotAuthFailure(error, 'la mise à jour du statut');
       if (this.isConnectionError(error)) {
         // Ne pas annoncer un succès sans écriture : le statut affiché
         // divergerait de celui du service prescriptions.
