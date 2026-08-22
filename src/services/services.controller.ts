@@ -39,9 +39,12 @@ export class ServicesController {
     if (!this.SERVICES_URL) return FALLBACK_SERVICES;
 
     try {
+      // SERVICES_URL ne contient que la base URL. Le registre expose ses
+      // routes à la racine (`GET /services`) ; `/services/api` n'est que le
+      // point de montage de son swagger, pas un préfixe de route.
       const response = await firstValueFrom(
         this.httpService.get(
-          `${this.SERVICES_URL.replace(/\/+$/, '')}/services/api/services`,
+          `${this.SERVICES_URL.replace(/\/+$/, '')}/services`,
           { timeout: 8000 },
         ),
       );
