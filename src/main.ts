@@ -64,6 +64,18 @@ async function bootstrap() {
     },
   });
 
-  await app.listen(process.env.PORT ?? 5000);
+  // `??` ne filtrerait pas une variable PORT définie mais vide (cas d'une
+  // variable déclarée sans valeur sur Render) : `listen('')` échoue alors en
+  // ERR_SOCKET_BAD_PORT. On n'accepte donc qu'un entier valide.
+  // Attention : Number('') vaut 0, d'où le trim() préalable — sinon une
+  // variable vide ferait écouter sur un port aléatoire au lieu du défaut.
+  const rawPort = (process.env.PORT ?? '').trim();
+  const parsedPort = Number(rawPort);
+  const port =
+    rawPort !== '' && Number.isInteger(parsedPort) && parsedPort > 0 && parsedPort < 65536
+      ? parsedPort
+      : 5000;
+
+  await app.listen(port, '0.0.0.0');
 }
 bootstrap();
