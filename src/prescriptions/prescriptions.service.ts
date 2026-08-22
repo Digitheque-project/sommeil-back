@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -88,10 +89,12 @@ export class PrescriptionsService {
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(
-          `Service prescriptions non disponible (${this.PRESCRIPTIONS_URL}), utilisation des données mockées pour patient ${patientId}`,
+        this.logger.error(
+          `Service prescriptions injoignable (${this.PRESCRIPTIONS_URL}) pour le patient ${patientId}`,
         );
-        return this.getMockPrescriptions();
+        throw new ServiceUnavailableException(
+          'Les prescriptions sont momentanément indisponibles (service prescriptions injoignable).',
+        );
       }
       this.logger.error(
         `Erreur lors de la récupération des prescriptions du patient ${patientId}: ${err.message}`,
@@ -139,15 +142,11 @@ export class PrescriptionsService {
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(
-          `Service prescriptions non disponible (${this.polysomnographieUrl}), utilisation des données mockées pour la liste polysomnographie`,
+        this.logger.error(
+          `Service prescriptions injoignable (${this.polysomnographieUrl}) pour la liste polysomnographie`,
         );
-
-        // Même avec les données mockées, essayer de récupérer les planifications
-        const planificationsMap = await this.getPlanificationsSafely();
-
-        return this.getMockPolysomnographies().map((item) => 
-          this.normalizePolysomnographie(item, planificationsMap.get(item.id))
+        throw new ServiceUnavailableException(
+          'Les prescriptions de polysomnographie sont momentanément indisponibles (service prescriptions injoignable).',
         );
       }
       this.logger.error(`Erreur lors de la récupération des polysomnographies: ${err.message}`);
@@ -202,13 +201,13 @@ export class PrescriptionsService {
         ),
       };
     } catch (dbError) {
-      this.logger.warn(`Erreur base de données locale pour planification: ${dbError}`);
-
-      // Fallback en mémoire (ancien comportement)
-      return {
-        success: true,
-        ...this.normalizePolysomnographie({ ...target, id, rdvDate: data.rdvDate, rdvHeure: data.rdvHeure ?? target.rdvHeure ?? '20:00' }),
-      };
+      // L'ancien repli renvoyait un rendez-vous « planifié » construit en
+      // mémoire alors que rien n'était persisté : le praticien voyait un RDV
+      // qui disparaissait au rechargement. On remonte l'échec.
+      this.logger.error(`Erreur base de données locale pour planification: ${dbError}`);
+      throw new ServiceUnavailableException(
+        "Le rendez-vous n'a pas pu être enregistré (base locale injoignable).",
+      );
     }
   }
 
@@ -229,83 +228,20 @@ export class PrescriptionsService {
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(
-          `Service prescriptions non disponible, mise à jour mockée pour prescription ${id}`,
+        // Ne pas annoncer un succès sans écriture : le statut affiché
+        // divergerait de celui du service prescriptions.
+        this.logger.error(
+          `Service prescriptions injoignable pour la mise à jour du statut de ${id}`,
         );
-        return { success: true, message: 'Statut mis à jour (mock)' };
+        throw new ServiceUnavailableException(
+          "Le statut n'a pas pu être mis à jour (service prescriptions injoignable).",
+        );
       }
       this.logger.error(
         `Erreur lors de la mise à jour du statut de la prescription ${id}: ${err.message}`,
       );
       throw error;
     }
-  }
-
-  private getMockPrescriptions() {
-    return [
-      {
-        id: '1',
-        type: 'CPAP',
-        label: 'Prescription CPAP',
-        detail: 'Pression 8 cmH2O',
-        statut: 'planned',
-        patientId: 'PAT001',
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: '2',
-        type: 'O2',
-        label: 'Prescription O2',
-        detail: '1 L/min',
-        statut: 'planned',
-        patientId: 'PAT001',
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: '3',
-        type: 'EEG',
-        label: 'Prescription EEG',
-        detail: 'Suivi nocturne',
-        statut: 'planned',
-        patientId: 'PAT001',
-        createdAt: new Date().toISOString(),
-      },
-    ];
-  }
-
-  private getMockPolysomnographies() {
-    return [
-      {
-        id: 'PSG-001',
-        patientId: 'PAT001',
-        patientNom: 'Marcel',
-        patientPrenom: 'Sophie',
-        motif: 'Apnée du sommeil suspectée / fatigue diurne',
-        statut: 'EN_ATTENTE',
-        urgence: false,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'PSG-002',
-        patientId: 'PAT002',
-        patientNom: 'Dupont',
-        patientPrenom: 'Jean',
-        motif: 'Ronflements importants, SAOS à confirmer',
-        statut: 'EN_ATTENTE',
-        urgence: false,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: 'PSG-003',
-        patientId: 'PAT003',
-        patientNom: 'Martin',
-        patientPrenom: 'Marie',
-        motif: 'Insomnie chronique, test de latence à programmer',
-        statut: 'EN_ATTENTE',
-        urgence: true,
-        createdAt: new Date().toISOString(),
-      },
-    ];
   }
 
   // Nouvelles méthodes CRUD pour la base de données locale

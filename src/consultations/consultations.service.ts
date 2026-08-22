@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
@@ -81,8 +82,12 @@ export class ConsultationsService {
       } catch (error) {
         const err = error as AxiosError;
         if (this.isConnectionError(error)) {
-          this.logger.warn(`Service consultation externe non disponible, utilisation des données mockées`);
-          return this.getMockConsultations();
+          this.logger.error(
+            `Base locale et service consultation externe injoignables : ${err.message}`,
+          );
+          throw new ServiceUnavailableException(
+            'Les consultations sont momentanément indisponibles (base locale et service externe injoignables).',
+          );
         }
         this.logger.error(`Erreur lors de la récupération des consultations: ${err.message}`);
         throw error;
@@ -123,8 +128,12 @@ export class ConsultationsService {
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(`Service consultation externe non disponible, utilisation des données mockées pour consultation ${id}`);
-        return this.getMockConsultation(+id);
+        this.logger.error(
+          `Base locale et service consultation externe injoignables pour la consultation ${id} : ${err.message}`,
+        );
+        throw new ServiceUnavailableException(
+          'La consultation est momentanément indisponible (base locale et service externe injoignables).',
+        );
       }
       this.logger.error(`Erreur lors de la récupération de la consultation ${id}: ${err.message}`);
       throw new NotFoundException('Consultation non trouvée');
@@ -166,8 +175,14 @@ export class ConsultationsService {
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(`Service consultation externe non disponible, finalisation mockée pour consultation ${id}`);
-        return { success: true, message: 'Consultation finalisée (mock)' };
+        // Ne jamais annoncer un succès qui n'a rien enregistré : le praticien
+        // croirait la consultation finalisée alors que rien n'est persisté.
+        this.logger.error(
+          `Base locale et service consultation externe injoignables pour la finalisation de ${id} : ${err.message}`,
+        );
+        throw new ServiceUnavailableException(
+          "La finalisation n'a pas pu être enregistrée (base locale et service externe injoignables).",
+        );
       }
       this.logger.error(`Erreur lors de la finalisation de la consultation ${id}: ${err.message}`);
       throw error;
@@ -246,8 +261,12 @@ export class ConsultationsService {
     } catch (error) {
       const err = error as AxiosError;
       if (this.isConnectionError(error)) {
-        this.logger.warn(`Service consultation externe non disponible, traitement mocké pour consultation ${id}`);
-        return { success: true, message: 'Consultation traitée (mock)' };
+        this.logger.error(
+          `Base locale et service consultation externe injoignables pour le traitement de ${id} : ${err.message}`,
+        );
+        throw new ServiceUnavailableException(
+          "L'action n'a pas pu être enregistrée (base locale et service externe injoignables).",
+        );
       }
       this.logger.error(`Erreur lors du traitement de la consultation ${id}: ${err.message}`);
       throw error;
@@ -292,82 +311,6 @@ export class ConsultationsService {
       this.logger.error(`Erreur lors de la récupération de l'historique du patient ${patientId}: ${err.message}`);
       throw error;
     }
-  }
-
-  private getMockConsultations() {
-    return [
-      {
-        id: 1,
-        date: new Date().toISOString(),
-        heure: '09:00',
-        motif: 'Apnée suspectée / fatigue diurne',
-        statut: 'EN_COURS',
-        typeVisite: 'INITIALE',
-        ugence: false,
-        arriveeAccueil: true,
-        estReport: false,
-        patientId: 'PAT001',
-        patient: {
-          displayName: 'MARCEL, Sophie',
-          prenom: 'Sophie',
-          nom: 'Marcel',
-          dossier: 'DOS001',
-          priseEnCharge: { companyName: 'CNAM', isActive: true },
-        },
-        medecinId: 'MED001',
-        observation: { diagnostic: 'AOS légère à modérée', notes: '' },
-      },
-      {
-        id: 2,
-        date: new Date().toISOString(),
-        heure: '10:30',
-        motif: 'Contrôle CPAP',
-        statut: 'EN_ATTENTE',
-        typeVisite: 'CONTROLE',
-        ugence: false,
-        arriveeAccueil: false,
-        estReport: false,
-        patientId: 'PAT002',
-        patient: {
-          displayName: 'DUPONT, Jean',
-          prenom: 'Jean',
-          nom: 'Dupont',
-          dossier: 'DOS002',
-          priseEnCharge: null,
-        },
-        medecinId: 'MED001',
-        observation: { diagnostic: '', notes: '' },
-      },
-      {
-        id: 3,
-        date: new Date().toISOString(),
-        heure: '14:00',
-        motif: 'Insomnie chronique',
-        statut: 'EN_ATTENTE',
-        typeVisite: 'INITIALE',
-        ugence: true,
-        arriveeAccueil: false,
-        estReport: false,
-        patientId: 'PAT003',
-        patient: {
-          displayName: 'MARTIN, Marie',
-          prenom: 'Marie',
-          nom: 'Martin',
-          dossier: 'DOS003',
-          priseEnCharge: { companyName: 'MGEN', isActive: true },
-        },
-        medecinId: 'MED001',
-        observation: { diagnostic: '', notes: '' },
-      },
-    ];
-  }
-
-  private getMockConsultation(id: number) {
-    const mock = this.getMockConsultations().find((c) => c.id === id);
-    if (!mock) {
-      throw new NotFoundException('Consultation non trouvée');
-    }
-    return mock;
   }
 
   // Nouvelles méthodes CRUD pour la base de données locale
@@ -454,9 +397,9 @@ export class ConsultationsService {
         orderBy: [{ urgence: 'desc' }, { heure: 'asc' }],
       });
     } catch (dbError) {
-      this.logger.warn(`Base locale indisponible pour la file d'attente: ${dbError}`);
-      return this.getMockConsultations().filter(
-        (item) => item.statut !== 'TERMINE',
+      this.logger.error(`Base locale indisponible pour la file d'attente: ${dbError}`);
+      throw new ServiceUnavailableException(
+        "La file d'attente est momentanément indisponible (base locale injoignable).",
       );
     }
   }
@@ -470,9 +413,9 @@ export class ConsultationsService {
         orderBy: { date: 'desc' },
       });
     } catch (dbError) {
-      this.logger.warn(`Base locale indisponible pour les contrôles: ${dbError}`);
-      return this.getMockConsultations().filter(
-        (item) => item.typeVisite === 'CONTROLE',
+      this.logger.error(`Base locale indisponible pour les contrôles: ${dbError}`);
+      throw new ServiceUnavailableException(
+        'Les consultations de contrôle sont momentanément indisponibles (base locale injoignable).',
       );
     }
   }
