@@ -11,6 +11,10 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
+import { PlanningService } from '../planning/planning.service';
+
+/** Code couleur d'urgence de l'hôpital : NORMALE, URGENTE, TRES_URGENTE. */
+export type PrioriteRdv = 'NORMALE' | 'URGENTE' | 'TRES_URGENTE';
 
 export type PolysomnographieItem = {
   id: string;
@@ -20,10 +24,30 @@ export type PolysomnographieItem = {
   motif: string;
   statut: string;
   urgence: boolean;
+  /** Niveau d'urgence détaillé, aligné sur les priorités du planning. */
+  priorite: PrioriteRdv;
   createdAt: string;
   rdvDate?: string | null;
   rdvHeure?: string | null;
 };
+
+/**
+ * Le service prescriptions exprime l'urgence en NORMAL | URGENT | TRES_URGENT.
+ * `Boolean(raw.urgence)` marquait donc TOUTES les prescriptions comme urgentes
+ * — « NORMAL » est une chaîne non vide, donc vraie.
+ */
+function lirePriorite(brut: unknown): PrioriteRdv {
+  if (typeof brut === 'boolean') return brut ? 'URGENTE' : 'NORMALE';
+
+  const valeur = String(brut ?? '')
+    .trim()
+    .toUpperCase();
+  if (valeur.startsWith('TRES_URGENT') || valeur === 'TRES_URGENTE') {
+    return 'TRES_URGENTE';
+  }
+  if (valeur.startsWith('URGENT')) return 'URGENTE';
+  return 'NORMALE';
+}
 
 @Injectable()
 export class PrescriptionsService {
@@ -38,6 +62,11 @@ export class PrescriptionsService {
   private readonly CHU_ID =
     process.env.CHU_ID || '1e5bbbb7-fa10-4d59-8848-2d0ce96a9394';
 
+  // Service accueil : source de vérité de l'identité patient au CHU. Base URL
+  // uniquement, le préfixe de chemin (/accueil/patients) est ajouté par le code.
+  private readonly ACCUEIL_URL =
+    process.env.ACCUEIL_URL || 'https://acceuil-back.onrender.com';
+
   // Identifiant du service Centre de Sommeil dans l'annuaire du CHU.
   // Laissé vide, il est résolu à la volée par nom via GET /services?chuId=.
   private readonly SLEEP_SERVICE_ID = process.env.SLEEP_SERVICE_ID?.trim() || '';
@@ -49,7 +78,8 @@ export class PrescriptionsService {
 
   constructor(
     private readonly httpService: HttpService,
-    private readonly prisma: PrismaService
+    private readonly prisma: PrismaService,
+    private readonly planningService: PlanningService,
   ) {}
 
   /**
@@ -166,6 +196,61 @@ export class PrescriptionsService {
     return false;
   }
 
+  private get patientsUrl(): string {
+    return `${this.ACCUEIL_URL.replace(/\/+$/, '')}/accueil/patients`;
+  }
+
+  /**
+   * Identité des patients cités par les prescriptions.
+   *
+   * Le service prescriptions ne transporte que `patientId` : sans cette
+   * résolution, les écrans affichaient un UUID à la place du nom, et la
+   * planification recopiait ce vide dans la table locale — d'où des examens
+   * PSG, comptes rendus et archives sans identité.
+   *
+   * Résolution par identifiant distinct plutôt que par le registre complet du
+   * CHU : celui-ci grossit indéfiniment alors que le nombre de patients cités
+   * par la liste reste borné. Best-effort — une fiche indisponible ne prive
+   * pas les autres lignes de leur nom.
+   */
+  private async resolvePatientsSafely(
+    patientIds: string[],
+    authorization?: string,
+  ): Promise<Map<string, { nom: string; prenom: string }>> {
+    const uniques = [...new Set(patientIds.filter(Boolean))];
+
+    const entries = await Promise.all(
+      uniques.map(async (patientId) => {
+        try {
+          const response = await firstValueFrom(
+            this.httpService.get(
+              `${this.patientsUrl}/${encodeURIComponent(patientId)}`,
+              {
+                params: { chuId: this.CHU_ID },
+                headers: this.authHeaders(authorization),
+                timeout: 8000,
+              },
+            ),
+          );
+          const patient = response.data;
+          return [
+            patientId,
+            { nom: patient?.nom ?? '', prenom: patient?.prenom ?? '' },
+          ] as const;
+        } catch (error) {
+          this.logger.warn(
+            `Identité du patient ${patientId} indisponible auprès du service accueil: ${error}`,
+          );
+          return null;
+        }
+      }),
+    );
+
+    return new Map(
+      entries.filter((entry): entry is NonNullable<typeof entry> => entry !== null),
+    );
+  }
+
   private async getPlanificationsSafely(): Promise<Map<string, { rdvDate: Date; rdvHeure: string }>> {
     try {
       const planifications = await this.prisma.polysomnographiePlanification.findMany();
@@ -214,22 +299,36 @@ export class PrescriptionsService {
     }
   }
 
-  private normalizePolysomnographie(raw: any, scheduledPlanification?: { rdvDate: Date; rdvHeure: string }): PolysomnographieItem {
+  private normalizePolysomnographie(
+    raw: any,
+    scheduledPlanification?: { rdvDate: Date; rdvHeure: string },
+    patient?: { nom: string; prenom: string },
+  ): PolysomnographieItem {
     const id = String(raw?.id ?? raw?.prescriptionId ?? '');
+    const priorite = lirePriorite(raw?.urgence);
 
+    // `||` et non `??` : une chaîne vide doit laisser la main à la source
+    // suivante, sans quoi un champ présent mais vide masquerait l'identité
+    // résolue auprès du service accueil.
     return {
       id,
       patientId: String(raw?.patientId ?? ''),
       patientNom:
-        raw?.patientNom ?? raw?.patient?.nom ?? raw?.patient?.lastname ?? '',
+        patient?.nom ||
+        raw?.patientNom ||
+        raw?.patient?.nom ||
+        raw?.patient?.lastname ||
+        '',
       patientPrenom:
-        raw?.patientPrenom ??
-        raw?.patient?.prenom ??
-        raw?.patient?.firstname ??
+        patient?.prenom ||
+        raw?.patientPrenom ||
+        raw?.patient?.prenom ||
+        raw?.patient?.firstname ||
         '',
       motif: raw?.motif ?? raw?.contexteClinique ?? raw?.observation ?? '',
       statut: scheduledPlanification ? 'PLANIFIE' : (raw?.statut ?? 'EN_ATTENTE'),
-      urgence: Boolean(raw?.urgence),
+      urgence: priorite !== 'NORMALE',
+      priorite,
       createdAt: raw?.createdAt ?? new Date().toISOString(),
       rdvDate: scheduledPlanification?.rdvDate.toISOString() ?? raw?.rdvDate ?? null,
       rdvHeure: scheduledPlanification?.rdvHeure ?? raw?.heure ?? raw?.rdvHeure ?? null,
@@ -262,9 +361,17 @@ export class PrescriptionsService {
 
       // Récupérer les planifications depuis la base de données locale
       const planificationsMap = await this.getPlanificationsSafely();
+      const patientsMap = await this.resolvePatientsSafely(
+        list.map((item: any) => String(item?.patientId ?? '')),
+        authorization,
+      );
 
-      return list.map((item: any) => 
-        this.normalizePolysomnographie(item, planificationsMap.get(String(item?.id ?? item?.prescriptionId)))
+      return list.map((item: any) =>
+        this.normalizePolysomnographie(
+          item,
+          planificationsMap.get(String(item?.id ?? item?.prescriptionId)),
+          patientsMap.get(String(item?.patientId ?? '')),
+        ),
       );
     } catch (error) {
       const err = error as AxiosError;
@@ -308,6 +415,11 @@ export class PrescriptionsService {
           rdvDate: new Date(data.rdvDate),
           rdvHeure: data.rdvHeure ?? target.rdvHeure ?? '20:00',
           statut: 'PLANIFIE',
+          // Rafraîchit l'identité : les planifications enregistrées avant la
+          // résolution auprès du service accueil portent un nom vide, elles
+          // se corrigent ainsi dès qu'on les replanifie.
+          patientNom: target.patientNom,
+          patientPrenom: target.patientPrenom,
         },
         create: {
           prescriptionId: id,
@@ -322,13 +434,30 @@ export class PrescriptionsService {
         },
       });
 
+      // Le planning ne lit que `RendezVousPlanning` : sans cette seconde
+      // écriture, l'examen était bien enregistré mais n'apparaissait nulle
+      // part dans le calendrier. Volontairement dans le même `try` — les deux
+      // tables vivent dans la même base, et les deux écritures étant des
+      // upsert idempotents, réessayer est sans risque.
+      await this.planningService.upsertDepuisPrescription({
+        prescriptionId: id,
+        patientId: target.patientId,
+        patientNom: target.patientNom,
+        patientPrenom: target.patientPrenom,
+        motif: target.motif || 'Polysomnographie',
+        priorite: target.priorite,
+        dateRdv: planification.rdvDate,
+        heureDebut: planification.rdvHeure,
+      });
+
       // La planification est passée en second argument : sans elle, la réponse
       // reprenait le statut d'origine (EN_ATTENTE) alors que le rendez-vous
-      // vient d'être posé.
+      // vient d'être posé. `urgence: target.priorite` conserve le niveau fin
+      // (un booléen écraserait TRES_URGENTE en URGENTE).
       return {
         success: true,
         ...this.normalizePolysomnographie(
-          { ...target, id },
+          { ...target, id, urgence: target.priorite },
           { rdvDate: planification.rdvDate, rdvHeure: planification.rdvHeure },
         ),
       };

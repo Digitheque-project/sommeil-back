@@ -83,6 +83,48 @@ export class PlanningService {
     });
   }
 
+  /**
+   * Inscrit (ou met à jour) au planning le rendez-vous d'un examen prescrit.
+   *
+   * La planification d'une polysomnographie vit dans sa propre table : sans
+   * cette écriture, l'examen était bien enregistré mais restait invisible au
+   * planning, qui ne lit que `RendezVousPlanning`.
+   *
+   * Idempotent via `prescriptionId` : replanifier déplace le rendez-vous
+   * existant au lieu d'en empiler un second. Le statut est réinitialisé à
+   * EN_ATTENTE — replanifier un examen annulé le remet bien à l'ordre du jour.
+   */
+  async upsertDepuisPrescription(data: {
+    prescriptionId: string;
+    patientId: string;
+    patientNom: string;
+    patientPrenom: string;
+    motif?: string;
+    priorite?: string;
+    dateRdv: Date;
+    heureDebut: string;
+    dureeMinutes?: number;
+  }) {
+    const dureeMinutes = data.dureeMinutes ?? 60;
+    const commun = {
+      patientId: data.patientId,
+      patientNom: data.patientNom,
+      patientPrenom: data.patientPrenom,
+      motif: data.motif,
+      priorite: data.priorite ?? 'NORMALE',
+      dateRdv: data.dateRdv,
+      heureDebut: data.heureDebut,
+      heureFin: this.calculerHeureFin(data.heureDebut, dureeMinutes),
+      dureeMinutes,
+    };
+
+    return this.prisma.rendezVousPlanning.upsert({
+      where: { prescriptionId: data.prescriptionId },
+      update: { ...commun, statut: 'EN_ATTENTE' },
+      create: { ...commun, prescriptionId: data.prescriptionId },
+    });
+  }
+
   async modifier(id: string, data: ModifierRdvDto) {
     await this.obtenirParId(id);
 

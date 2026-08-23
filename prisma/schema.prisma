@@ -132,6 +132,13 @@ model PsgInterpretation {
 
 model RendezVousPlanning {
   id             String   @id @default(cuid())
+  // Rendez-vous né d'une prescription de polysomnographie. Sans ce lien, la
+  // planification d'un examen n'apparaissait pas du tout au planning (deux
+  // tables sans pont) ; il rend aussi l'écriture idempotente : replanifier
+  // met à jour la ligne au lieu d'en créer une seconde.
+  // Nullable et unique : les RDV saisis directement au planning n'en portent
+  // pas, et PostgreSQL autorise autant de NULL que nécessaire.
+  prescriptionId String?  @unique
   patientId      String
   patientNom     String
   patientPrenom  String
