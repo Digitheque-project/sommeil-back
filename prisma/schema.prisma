@@ -99,6 +99,11 @@ model PolysomnographiePlanification {
   motif          String
   rdvDate        DateTime
   rdvHeure       String
+  // Origine de la prescription (service prescriptions) : nécessaire pour
+  // avertir le bon service/prescripteur quand le résultat est disponible.
+  prescripteurId  String?
+  serviceIdSource String?
+  chuId           String?
   // 'PLANIFIE' -> 'EN_COURS' (psg:start) -> 'TERMINE' (psg:stop)
   statut         String    @default("PLANIFIE")
   urgence        Boolean   @default(false)

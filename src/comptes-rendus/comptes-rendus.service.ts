@@ -145,6 +145,12 @@ export class ComptesRendusService {
    * prescription externe à mettre à jour). Best-effort : un échec ne doit
    * jamais annuler la signature du compte rendu, déjà actée en base ; il est
    * simplement remonté à l'appelant pour affichage.
+   *
+   * Deux appels distincts et complémentaires : le premier ne fait que
+   * refléter le statut REALISEE dans le service prescriptions (silencieux,
+   * personne n'y est notifié) ; le second avertit réellement le service
+   * prescripteur via le hub de notification central. Sans lui, le
+   * prescripteur ne découvre le résultat qu'en rechargeant sa liste.
    */
   private async notifierPrescripteur(
     compteRendu: { id: string; psgId: string | null },
@@ -167,7 +173,16 @@ export class ComptesRendusService {
         exam.prescriptionId,
         authorization,
       );
-      return true;
+
+      return await this.prescriptionsService.notifierResultatDisponible({
+        serviceIdSource: exam.serviceIdSource,
+        chuId: exam.chuId,
+        patientId: exam.patientId,
+        patientNom: `${exam.patientPrenom} ${exam.patientNom}`.trim(),
+        prescriptionId: exam.prescriptionId,
+        compteRenduId: compteRendu.id,
+        urgence: exam.urgence,
+      });
     } catch (error) {
       this.logger.error(
         `Compte rendu ${compteRendu.id} validé, mais la transmission au prescripteur a échoué: ${error}`,

@@ -29,6 +29,11 @@ export type PolysomnographieItem = {
   createdAt: string;
   rdvDate?: string | null;
   rdvHeure?: string | null;
+  // Origine de la prescription : nécessaire pour avertir le bon
+  // service/prescripteur une fois le résultat disponible.
+  prescripteurId?: string | null;
+  serviceIdSource?: string | null;
+  chuId?: string | null;
 };
 
 /**
@@ -332,6 +337,9 @@ export class PrescriptionsService {
       createdAt: raw?.createdAt ?? new Date().toISOString(),
       rdvDate: scheduledPlanification?.rdvDate.toISOString() ?? raw?.rdvDate ?? null,
       rdvHeure: scheduledPlanification?.rdvHeure ?? raw?.heure ?? raw?.rdvHeure ?? null,
+      prescripteurId: raw?.prescripteurId ?? null,
+      serviceIdSource: raw?.serviceIdSource ?? null,
+      chuId: raw?.chuId ?? null,
     };
   }
 
@@ -420,6 +428,11 @@ export class PrescriptionsService {
           // se corrigent ainsi dès qu'on les replanifie.
           patientNom: target.patientNom,
           patientPrenom: target.patientPrenom,
+          // Idem pour l'origine : une replanification est l'occasion de la
+          // renseigner si elle manquait (prescription créée avant ce champ).
+          prescripteurId: target.prescripteurId ?? undefined,
+          serviceIdSource: target.serviceIdSource ?? undefined,
+          chuId: target.chuId ?? undefined,
         },
         create: {
           prescriptionId: id,
@@ -431,6 +444,11 @@ export class PrescriptionsService {
           rdvHeure: data.rdvHeure ?? target.rdvHeure ?? '20:00',
           statut: 'PLANIFIE',
           urgence: target.urgence,
+          // Origine de la prescription : indispensable pour avertir le bon
+          // service quand le compte rendu sera validé (cf. notifierResultatDisponible).
+          prescripteurId: target.prescripteurId ?? undefined,
+          serviceIdSource: target.serviceIdSource ?? undefined,
+          chuId: target.chuId ?? undefined,
         },
       });
 
@@ -541,6 +559,74 @@ export class PrescriptionsService {
         `Erreur lors de la transmission du résultat de la prescription PSG ${prescriptionId}: ${err.message}`,
       );
       throw error;
+    }
+  }
+
+  // Hub de notification central du CHU : mêmes routes que celles utilisées
+  // par le service prescriptions pour avertir un service destinataire.
+  private readonly NOTIFICATION_URL =
+    process.env.SERVICE_NOTIFICATION_URL ||
+    'https://service-notification-nlqp.onrender.com';
+
+  /**
+   * Avertit le service prescripteur d'origine qu'un résultat de
+   * polysomnographie est disponible. Distinct de
+   * `marquerPolysomnographieRealisee` : ce dernier ne fait que refléter le
+   * statut dans le service prescriptions, qui ne notifie personne lors d'une
+   * simple mise à jour de statut (seule la création d'une prescription
+   * déclenche une notification, là-bas). Sans cet appel, le prescripteur
+   * n'apprend jamais que le résultat est prêt.
+   *
+   * Best-effort : ne lève jamais — un échec ne doit pas remettre en cause la
+   * validation, déjà actée. L'appelant décide comment refléter l'échec.
+   */
+  async notifierResultatDisponible(params: {
+    serviceIdSource?: string | null;
+    chuId?: string | null;
+    patientId: string;
+    patientNom: string;
+    prescriptionId: string;
+    compteRenduId: string;
+    urgence?: boolean;
+  }): Promise<boolean> {
+    if (!params.serviceIdSource) {
+      this.logger.warn(
+        `Service prescripteur inconnu pour la prescription PSG ${params.prescriptionId} ` +
+          `(prescription créée avant l'enregistrement de l'origine) : notification de résultat non envoyée.`,
+      );
+      return false;
+    }
+
+    try {
+      await firstValueFrom(
+        this.httpService.post(
+          `${this.NOTIFICATION_URL}/notifications/service`,
+          {
+            serviceId: params.serviceIdSource,
+            title: 'Résultat de polysomnographie disponible',
+            message: `Le résultat de l'examen de polysomnographie de ${params.patientNom} est disponible.`,
+            type: 'RESULTAT_EXAMEN',
+            source: 'sommeil-back',
+            data: {
+              prescriptionId: params.prescriptionId,
+              compteRenduId: params.compteRenduId,
+              patientId: params.patientId,
+              patientNom: params.patientNom,
+              chuId: params.chuId ?? undefined,
+              serviceDestId: this.resolvedSleepServiceId || this.SLEEP_SERVICE_ID || undefined,
+              typePrescription: 'POLYSOMNOGRAPHIE',
+              urgence: params.urgence ? 'URGENT' : 'NORMAL',
+            },
+          },
+          { timeout: 8000 },
+        ),
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Notification de résultat disponible non envoyée pour la prescription PSG ${params.prescriptionId}: ${error}`,
+      );
+      return false;
     }
   }
 
