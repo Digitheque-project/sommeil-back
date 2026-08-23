@@ -116,10 +116,71 @@ export class ComptesRendusService {
       throw new BadRequestException('Un compte rendu vide ne peut pas être validé.');
     }
 
-    return this.prisma.compteRendu.update({
+    const updated = await this.prisma.compteRendu.update({
       where: { id },
       data: { statut: 'VALIDE', valideLe: new Date(), validePar: validePar ?? null },
     });
+
+    // Valider un compte rendu, c'est signer et envoyer le résultat au
+    // prescripteur : le dossier n'a plus rien à faire dans le fil de travail
+    // actif, il rejoint directement le registre des archives.
+    await this.archiverApresValidation(updated).catch((error) =>
+      this.logger.error(
+        `Compte rendu ${id} validé, mais l'archivage automatique a échoué: ${error}`,
+      ),
+    );
+
+    return updated;
+  }
+
+  private async archiverApresValidation(compteRendu: {
+    id: string;
+    consultationId: string | null;
+    patientNom: string | null;
+    titre: string;
+  }) {
+    const archiveCompteRendu = await this.prisma.archive.findFirst({
+      where: { type: 'COMPTE_RENDU', referenceId: compteRendu.id, restored: false },
+    });
+    if (!archiveCompteRendu) {
+      await this.prisma.archive.create({
+        data: {
+          type: 'COMPTE_RENDU',
+          referenceId: compteRendu.id,
+          titre: `Compte rendu — ${compteRendu.patientNom ?? compteRendu.titre}`,
+          donnees: compteRendu as any,
+        },
+      });
+    }
+
+    // Lien historique : un compte rendu encore rattaché à une consultation
+    // (plutôt qu'à un examen PSG) en archive aussi le dossier parent.
+    if (!compteRendu.consultationId) return;
+
+    const consultation = await this.prisma.consultationLocale.findUnique({
+      where: { id: compteRendu.consultationId },
+    });
+    if (!consultation || consultation.archived) return;
+
+    await this.prisma.consultationLocale.update({
+      where: { id: consultation.id },
+      data: { archived: true },
+    });
+
+    const archiveConsultation = await this.prisma.archive.findFirst({
+      where: { type: 'CONSULTATION', referenceId: consultation.id, restored: false },
+    });
+    if (!archiveConsultation) {
+      await this.prisma.archive.create({
+        data: {
+          type: 'CONSULTATION',
+          referenceId: consultation.id,
+          titre: `Consultation — ${consultation.patientPrenom} ${consultation.patientNom}`.trim(),
+          description: consultation.motif ?? undefined,
+          donnees: consultation as any,
+        },
+      });
+    }
   }
 
   async remove(id: string) {
