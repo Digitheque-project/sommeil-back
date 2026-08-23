@@ -158,8 +158,11 @@ export class ConsultationsController {
     status: 200,
     description: 'Consultation archivée avec succès',
   })
-  async archiveConsultation(@Param('id') id: string) {
-    return this.consultationsService.archiveConsultation(id);
+  async archiveConsultation(
+    @Param('id') id: string,
+    @Body() body?: { archivedBy?: string },
+  ) {
+    return this.consultationsService.archiveConsultation(id, body?.archivedBy);
   }
 
   @Post(':id/observations')
@@ -170,7 +173,17 @@ export class ConsultationsController {
     status: 201,
     description: 'Observation ajoutée avec succès',
   })
-  async addObservation(@Param('id') id: string, @Body() data: { diagnostic?: string; notes?: string }) {
+  async addObservation(
+    @Param('id') id: string,
+    @Body()
+    data: {
+      diagnostic?: string;
+      notes?: string;
+      diagnosticSuspicion?: string;
+      diagnosticRetenu?: string;
+      parametres?: Array<{ nom: string; valeur: string; unite?: string | null }>;
+    },
+  ) {
     return this.consultationsService.addObservation(id, data);
   }
 

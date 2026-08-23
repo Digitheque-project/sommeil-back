@@ -22,12 +22,21 @@ model ConsultationLocale {
   urgence        Boolean  @default(false)
   arriveeAccueil Boolean  @default(false)
   estReport      Boolean  @default(false)
+  // Doublon assumé de `statut === 'TERMINE'` : c'est le drapeau que consomme
+  // l'interface (badge « Effectué », bouton d'archivage), et il doit rester
+  // vrai même si le statut évolue vers une valeur plus fine plus tard.
+  termine        Boolean  @default(false)
   patientId      String
   patientNom     String
   patientPrenom  String
   patientDossier String?
   medecinId      String?
   archived       Boolean  @default(false)
+  // Rattachement d'un contrôle à la consultation qui l'a déclenché. Sans lui,
+  // un contrôle créé à la finalisation ne pouvait pas être retrouvé et le
+  // praticien retombait sur la liste au lieu de la fiche de contrôle.
+  ordreControle         Int?
+  consultationParenteId String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -40,7 +49,16 @@ model Observation {
   consultationId     String
   consultationLocale ConsultationLocale @relation(fields: [consultationId], references: [id], onDelete: Cascade)
   diagnostic         String?
+  // Le formulaire de traitement distingue l'hypothèse du diagnostic final :
+  // les écraser dans le seul champ `diagnostic` perdait la suspicion.
+  diagnosticSuspicion String?
+  diagnosticRetenu    String?
   notes              String?
+  // Paramètres cliniques ([{ nom, valeur, unite }]) et demandes non
+  // médicamenteuses (contrôle, hospitalisation, recommandations) saisis dans
+  // l'écran de traitement.
+  parametres         Json?
+  nonMedicaments     Json?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 }

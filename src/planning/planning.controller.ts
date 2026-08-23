@@ -65,6 +65,17 @@ export class PlanningController {
     return this.planningService.annuler(id);
   }
 
+  @Patch(':id/realise')
+  @ApiOperation({
+    summary: 'Recevoir le patient : le RDV devient une consultation à traiter',
+    description:
+      "Marque le rendez-vous comme réalisé et ouvre (ou retrouve) la consultation locale correspondante. La réponse porte `consultation.id`, à utiliser pour ouvrir l'écran de traitement.",
+  })
+  @ApiResponse({ status: 200, description: 'Rendez-vous réalisé et consultation ouverte' })
+  async marquerRealise(@Param('id') id: string) {
+    return this.planningService.marquerRealise(id);
+  }
+
   @Patch(':id/non-realise')
   @ApiOperation({ summary: 'Marquer un rendez-vous comme non réalisé' })
   async marquerNonRealise(@Param('id') id: string) {

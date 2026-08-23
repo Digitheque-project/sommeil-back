@@ -57,6 +57,23 @@ $ npm run test:e2e
 $ npm run test:cov
 ```
 
+## Schéma de base de données
+
+Le schéma Prisma est appliqué avec `db push` (ce projet n'utilise pas de
+migrations versionnées). Après tout changement de `prisma/schema.prisma`, et
+**avant** de démarrer une nouvelle version en production :
+
+```bash
+$ npm run db:push
+```
+
+Colonnes ajoutées pour le fil « traitement d'un patient » (toutes
+facultatives ou avec valeur par défaut, donc sûres sur une base existante) :
+
+- `ConsultationLocale.termine`, `ordreControle`, `consultationParenteId`
+- `Observation.diagnosticSuspicion`, `diagnosticRetenu`, `parametres`,
+  `nonMedicaments`
+
 ## Deployment
 
 When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
