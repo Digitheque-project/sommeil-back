@@ -379,6 +379,42 @@ export class PrescriptionsService {
     }
   }
 
+  /**
+   * Signale au service prescriptions que le résultat d'un examen
+   * polysomnographie est disponible (compte rendu validé) : PATCH
+   * .../polysomnographie/:id/statut avec statut=REALISEE. Distinct de
+   * updatePrescriptionStatus, qui cible la route générique
+   * .../medicale/:id/statut — inadaptée aux prescriptions polysomnographie.
+   */
+  async marquerPolysomnographieRealisee(prescriptionId: string, authorization?: string) {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.patch(
+          `${this.polysomnographieUrl}/${prescriptionId}/statut`,
+          { statut: 'REALISEE' },
+          { headers: this.authHeaders(authorization), timeout: 8000 },
+        ),
+      );
+
+      return response.data;
+    } catch (error) {
+      const err = error as AxiosError;
+      this.assertNotAuthFailure(error, 'la transmission du résultat au prescripteur');
+      if (this.isConnectionError(error)) {
+        this.logger.error(
+          `Service prescriptions injoignable pour transmettre le résultat de la prescription PSG ${prescriptionId}`,
+        );
+        throw new ServiceUnavailableException(
+          "Le résultat n'a pas pu être transmis au prescripteur (service prescriptions injoignable).",
+        );
+      }
+      this.logger.error(
+        `Erreur lors de la transmission du résultat de la prescription PSG ${prescriptionId}: ${err.message}`,
+      );
+      throw error;
+    }
+  }
+
   // Nouvelles méthodes CRUD pour la base de données locale
   async getAllPlanifications() {
     return this.prisma.polysomnographiePlanification.findMany({

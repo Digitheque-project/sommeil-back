@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   Post,
   Put,
@@ -66,10 +67,16 @@ export class ComptesRendusController {
   @Post(':id/validate')
   @ApiOperation({
     summary: 'Valider et signer un compte rendu',
-    description: 'Permission `report:validate`. Verrouille le document.',
+    description:
+      'Permission `report:validate`. Verrouille le document, archive le dossier ' +
+      "et, pour un examen polysomnographie, transmet le résultat au prescripteur.",
   })
-  async validate(@Param('id') id: string, @Body() body: { validePar?: string }) {
-    return this.comptesRendusService.validate(id, body?.validePar);
+  async validate(
+    @Param('id') id: string,
+    @Body() body: { validePar?: string },
+    @Headers('authorization') authorization?: string,
+  ) {
+    return this.comptesRendusService.validate(id, body?.validePar, authorization);
   }
 
   @Get(':id/export')

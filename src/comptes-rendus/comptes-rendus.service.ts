@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PrescriptionsService } from '../prescriptions/prescriptions.service';
 
 export type CompteRenduPayload = {
   consultationId?: string;
@@ -23,7 +24,10 @@ export type CompteRenduPayload = {
 export class ComptesRendusService {
   private readonly logger = new Logger(ComptesRendusService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly prescriptionsService: PrescriptionsService,
+  ) {}
 
   /** Un compte rendu validé est verrouillé : plus aucune écriture n'est acceptée. */
   private assertModifiable(compteRendu: { statut: string }) {
@@ -109,9 +113,9 @@ export class ComptesRendusService {
     });
   }
 
-  async validate(id: string, validePar?: string) {
+  async validate(id: string, validePar?: string, authorization?: string) {
     const existing = await this.findOne(id);
-    if (existing.statut === 'VALIDE') return existing;
+    if (existing.statut === 'VALIDE') return { ...existing, prescripteurNotifie: true };
     if (!existing.contenu?.trim()) {
       throw new BadRequestException('Un compte rendu vide ne peut pas être validé.');
     }
@@ -130,7 +134,46 @@ export class ComptesRendusService {
       ),
     );
 
-    return updated;
+    const prescripteurNotifie = await this.notifierPrescripteur(updated, authorization);
+
+    return { ...updated, prescripteurNotifie };
+  }
+
+  /**
+   * Transmet le résultat au prescripteur d'origine — uniquement pertinent
+   * pour un examen polysomnographie (une consultation n'a pas de
+   * prescription externe à mettre à jour). Best-effort : un échec ne doit
+   * jamais annuler la signature du compte rendu, déjà actée en base ; il est
+   * simplement remonté à l'appelant pour affichage.
+   */
+  private async notifierPrescripteur(
+    compteRendu: { id: string; psgId: string | null },
+    authorization?: string,
+  ): Promise<boolean> {
+    if (!compteRendu.psgId) return true;
+
+    try {
+      const exam = await this.prisma.polysomnographiePlanification.findUnique({
+        where: { id: compteRendu.psgId },
+      });
+      if (!exam) {
+        this.logger.warn(
+          `Compte rendu ${compteRendu.id} validé : examen PSG ${compteRendu.psgId} introuvable, prescripteur non notifié.`,
+        );
+        return false;
+      }
+
+      await this.prescriptionsService.marquerPolysomnographieRealisee(
+        exam.prescriptionId,
+        authorization,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Compte rendu ${compteRendu.id} validé, mais la transmission au prescripteur a échoué: ${error}`,
+      );
+      return false;
+    }
   }
 
   private async archiverApresValidation(compteRendu: {
