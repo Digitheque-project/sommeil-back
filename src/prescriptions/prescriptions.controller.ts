@@ -66,8 +66,9 @@ export class PrescriptionsController {
   async schedulePolysomnographie(
     @Param('id') id: string,
     @Body() body: { rdvDate: string; rdvHeure?: string },
+    @Headers('authorization') authorization?: string,
   ) {
-    return this.prescriptionsService.schedulePolysomnographie(id, body);
+    return this.prescriptionsService.schedulePolysomnographie(id, body, authorization);
   }
 
   @Put(':id/statut')

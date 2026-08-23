@@ -288,12 +288,13 @@ export class PrescriptionsService {
   async schedulePolysomnographie(
     id: string,
     data: { rdvDate: string; rdvHeure?: string },
+    authorization?: string,
   ) {
     if (!data?.rdvDate) {
       throw new BadRequestException('Une date de rendez-vous est requise');
     }
 
-    const items = await this.getPolysomnographiePrescriptions();
+    const items = await this.getPolysomnographiePrescriptions(authorization);
     const target = items.find((item) => item.id === id);
     if (!target) {
       throw new NotFoundException('Prescription polysomnographie non trouvée');
