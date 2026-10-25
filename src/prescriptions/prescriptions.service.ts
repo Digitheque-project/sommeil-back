@@ -8,6 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { chuIdFromAuthorization, gatewayUrl } from '../config/gateway';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
@@ -58,19 +59,19 @@ function lirePriorite(brut: unknown): PrioriteRdv {
 export class PrescriptionsService {
   private readonly logger = new Logger(PrescriptionsService.name);
 
-  // URL de base du service prescriptions (sans préfixe ni suffixe) - à configurer via variables d'environnement.
-  private readonly PRESCRIPTIONS_URL = process.env.PRESCRIPTIONS_URL || 'https://prescriptionback-production.up.railway.app';
+  // Service prescriptions et registre des services : via la passerelle (GATEWAY_URL).
+  private get PRESCRIPTIONS_URL(): string {
+    return gatewayUrl();
+  }
   private readonly PRESCRIPTIONS_API_PATH = '/prescriptions/medicale';
 
-  // Établissement du Centre de Sommeil. Sert à ne remonter que les
-  // prescriptions de ce CHU, et à retrouver l'identifiant du service.
-  private readonly CHU_ID =
-    process.env.CHU_ID || '1e5bbbb7-fa10-4d59-8848-2d0ce96a9394';
+  // CHU de l'appelant (lu dans son jeton, voir chuIdFromAuthorization) : sert à
+  // ne remonter que les prescriptions de ce CHU et à retrouver le service.
 
-  // Service accueil : source de vérité de l'identité patient au CHU. Base URL
-  // uniquement, le préfixe de chemin (/accueil/patients) est ajouté par le code.
-  private readonly ACCUEIL_URL =
-    process.env.ACCUEIL_URL || 'https://acceuil-back.onrender.com';
+  // Service accueil (identité patient), via la passerelle.
+  private get ACCUEIL_URL(): string {
+    return gatewayUrl();
+  }
 
   // Identifiant du service Centre de Sommeil dans l'annuaire du CHU.
   // Laissé vide, il est résolu à la volée par nom via GET /services?chuId=.
@@ -120,7 +121,7 @@ export class PrescriptionsService {
     try {
       const response = await firstValueFrom(
         this.httpService.get(`${this.PRESCRIPTIONS_URL}/services`, {
-          params: { chuId: this.CHU_ID },
+          params: { chuId: chuIdFromAuthorization(authorization) },
           headers: this.authHeaders(authorization),
           timeout: 8000,
         }),
@@ -137,7 +138,7 @@ export class PrescriptionsService {
       const id = match?.serviceId ?? match?.id;
       if (!id) {
         this.logger.warn(
-          `Aucun service correspondant à « ${this.SLEEP_SERVICE_NAME} » dans l'annuaire du CHU ${this.CHU_ID} ` +
+          `Aucun service correspondant à « ${this.SLEEP_SERVICE_NAME} » dans l'annuaire du CHU ${chuIdFromAuthorization(authorization)} ` +
             `(${services.length} service(s) listé(s)). Filtrage par CHU uniquement.`,
         );
         return null;
@@ -150,19 +151,14 @@ export class PrescriptionsService {
       return this.resolvedSleepServiceId;
     } catch (error) {
       this.logger.warn(
-        `Annuaire des services injoignable pour le CHU ${this.CHU_ID}, filtrage par CHU uniquement: ${error}`,
+        `Annuaire des services injoignable pour le CHU ${chuIdFromAuthorization(authorization)}, filtrage par CHU uniquement: ${error}`,
       );
       return null;
     }
   }
 
-  // URL de base des prescriptions de polysomnographie reçues des services externes.
-  // POLYSOMNOGRAPHIE_URL est une base URL (sans préfixe ni suffixe) ; le préfixe
-  // de chemin est ajouté ici. Par défaut dérivée de PRESCRIPTIONS_URL (base URL).
+  // Prescriptions de polysomnographie reçues des services externes (passerelle).
   private get polysomnographieUrl(): string {
-    const configured = process.env.POLYSOMNOGRAPHIE_URL;
-    if (configured)
-      return `${configured.replace(/\/+$/, '')}/prescriptions/polysomnographie`;
     return `${this.PRESCRIPTIONS_URL}/prescriptions/polysomnographie`;
   }
   /**
@@ -231,7 +227,7 @@ export class PrescriptionsService {
             this.httpService.get(
               `${this.patientsUrl}/${encodeURIComponent(patientId)}`,
               {
-                params: { chuId: this.CHU_ID },
+                params: { chuId: chuIdFromAuthorization(authorization) },
                 headers: this.authHeaders(authorization),
                 timeout: 8000,
               },
@@ -276,7 +272,7 @@ export class PrescriptionsService {
     authorization?: string,
   ) {
     try {
-      const params: any = { chuId: chuId || this.CHU_ID };
+      const params: any = { chuId: chuId || chuIdFromAuthorization(authorization) };
 
       const response = await firstValueFrom(
         this.httpService.get(
@@ -357,7 +353,7 @@ export class PrescriptionsService {
       const response = await firstValueFrom(
         this.httpService.get(this.polysomnographieUrl, {
           params: {
-            chuId: this.CHU_ID,
+            chuId: chuIdFromAuthorization(authorization),
             ...(serviceIdDest ? { serviceIdDest } : {}),
           },
           headers: this.authHeaders(authorization),
@@ -564,9 +560,9 @@ export class PrescriptionsService {
 
   // Hub de notification central du CHU : mêmes routes que celles utilisées
   // par le service prescriptions pour avertir un service destinataire.
-  private readonly NOTIFICATION_URL =
-    process.env.SERVICE_NOTIFICATION_URL ||
-    'https://service-notification-nlqp.onrender.com';
+  private get NOTIFICATION_URL(): string {
+    return gatewayUrl();
+  }
 
   /**
    * Avertit le service prescripteur d'origine qu'un résultat de

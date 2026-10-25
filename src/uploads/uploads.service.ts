@@ -1,4 +1,5 @@
 import { BadGatewayException, BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { gatewayUrl } from '../config/gateway';
 
 /**
  * Relaye les fichiers vers le service-upload mutualisé du CHU (même famille
@@ -10,9 +11,10 @@ import { BadGatewayException, BadRequestException, Injectable, Logger } from '@n
 @Injectable()
 export class UploadsService {
   private readonly logger = new Logger(UploadsService.name);
-  private readonly UPLOAD_URL = (
-    process.env.UPLOAD_URL || 'https://service-upload-u5z9.onrender.com'
-  ).replace(/\/+$/, '');
+  // Service upload, via la passerelle (routes /files).
+  private get UPLOAD_URL(): string {
+    return gatewayUrl();
+  }
 
   async uploadFile(
     file: Express.Multer.File,

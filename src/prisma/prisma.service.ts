@@ -20,6 +20,17 @@ function buildSslOption(connectionString?: string) {
   }
 }
 
+/** Schéma indiqué par le paramètre `schema` de l'URL de connexion. */
+function schemaOf(connectionString?: string): { schema: string } | undefined {
+  if (!connectionString) return undefined;
+  try {
+    const schema = new URL(connectionString).searchParams.get('schema');
+    return schema ? { schema } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
@@ -30,7 +41,9 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       connectionString,
       ssl: buildSslOption(connectionString),
     });
-    const adapter = new PrismaPg(pool);
+    // Schéma dédié (ex. ?schema=sommeil sur Supabase) : sans cette option,
+    // l'adaptateur préfixe toutes ses requêtes par "public".
+    const adapter = new PrismaPg(pool, schemaOf(connectionString));
     super({ adapter });
   }
 

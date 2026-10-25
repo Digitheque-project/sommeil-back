@@ -6,6 +6,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { gatewayUrl, serviceToken } from '../config/gateway';
 import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,24 +29,20 @@ type NonMedicaments = {
 export class ConsultationsService {
   private readonly logger = new Logger(ConsultationsService.name);
 
-  // Service consultation externe. Comme partout dans ce projet, la variable
-  // d'environnement ne porte QUE la base URL : le préfixe de chemin réel des
-  // contrôleurs (`consultation/api`, cf. son `setGlobalPrefix`) est ajouté
-  // ici. Sans lui, chaque repli tapait une route inexistante et remontait un
-  // 404 au lieu des consultations.
-  private readonly CONSULTATION_EXTERNE_URL = `${(
-    process.env.CONSULTATION_EXTERNE_URL || 'http://localhost:3001'
-  ).replace(/\/+$/, '')}/${(process.env.CONSULTATION_EXTERNE_API_PREFIX || 'consultation/api').replace(/^\/+|\/+$/g, '')}`;
+  // Service consultation externe, via la passerelle : routes sous /consultation/api.
+  private get CONSULTATION_EXTERNE_URL(): string {
+    return gatewayUrl('/consultation/api');
+  }
 
   constructor(
     private readonly httpService: HttpService,
     private readonly prisma: PrismaService
   ) {}
 
+  // Jeton de service signé avec le secret commun (JWT_SECRET) : le service
+  // consultation externe n'accepte plus de jeton statique.
   private async getAuthToken(): Promise<string> {
-    // Récupérer le token depuis l'en-tête Authorization de la requête
-    // Pour l'instant, on utilise une variable d'environnement ou un token par défaut
-    return process.env.CONSULTATION_EXTERNE_TOKEN || '';
+    return serviceToken();
   }
 
   private isConnectionError(error: any): boolean {

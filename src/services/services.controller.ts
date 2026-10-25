@@ -8,6 +8,7 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { firstValueFrom } from 'rxjs';
+import { gatewayUrl } from '../config/gateway';
 
 type HospitalisationService = { id: string; name: string };
 
@@ -15,7 +16,8 @@ type HospitalisationService = { id: string; name: string };
 @Controller('services')
 export class ServicesController {
   private readonly logger = new Logger(ServicesController.name);
-  private readonly SERVICES_URL = process.env.SERVICES_URL;
+  // Registre des services du CHU, via la passerelle (GATEWAY_URL).
+  private readonly SERVICES_URL = process.env.GATEWAY_URL;
 
   constructor(private readonly httpService: HttpService) {}
 
@@ -36,7 +38,7 @@ export class ServicesController {
   ): Promise<HospitalisationService[]> {
     if (!this.SERVICES_URL) {
       throw new ServiceUnavailableException(
-        "L'annuaire des services du CHU n'est pas configuré (SERVICES_URL).",
+        "L'annuaire des services du CHU n'est pas configuré (GATEWAY_URL).",
       );
     }
 
@@ -48,7 +50,7 @@ export class ServicesController {
       // Le registre exige un jeton porteur : on relaie celui de l'appelant,
       // sinon il répond 401.
       const response = await firstValueFrom(
-        this.httpService.get(`${this.SERVICES_URL.replace(/\/+$/, '')}/services`, {
+        this.httpService.get(gatewayUrl('/services'), {
           timeout: 8000,
           headers: authorization ? { Authorization: authorization } : {},
         }),
