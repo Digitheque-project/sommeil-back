@@ -18,6 +18,9 @@
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+# Le schéma doit être présent avant `npm ci` : son script postinstall lance
+# `prisma generate`, qui échouait faute de prisma/schema.prisma.
+COPY prisma ./prisma
 RUN npm ci
 
 # ── Étape 2 : build ──────────────────────────────────────────────────────
