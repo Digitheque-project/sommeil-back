@@ -468,6 +468,9 @@ export class PrescriptionsService {
       // reprenait le statut d'origine (EN_ATTENTE) alors que le rendez-vous
       // vient d'être posé. `urgence: target.priorite` conserve le niveau fin
       // (un booléen écraserait TRES_URGENTE en URGENTE).
+      // Le service prescripteur (et l'Accueil) reçoit la date du rendez-vous :
+      // le service Prescription le prévient sur PATCH .../polysomnographie/:id/rdv.
+      void this.transmettreRdv(id, planification.rdvDate, planification.rdvHeure, authorization);
       return {
         success: true,
         ...this.normalizePolysomnographie(
@@ -483,6 +486,21 @@ export class PrescriptionsService {
       throw new ServiceUnavailableException(
         "Le rendez-vous n'a pas pu être enregistré (base locale injoignable).",
       );
+    }
+  }
+
+  /** Best-effort : un échec n'annule pas le rendez-vous déjà enregistré ici. */
+  private async transmettreRdv(id: string, rdvDate: Date, rdvHeure: string | null | undefined, authorization?: string) {
+    try {
+      await firstValueFrom(
+        this.httpService.patch(
+          `${this.polysomnographieUrl}/${id}/rdv`,
+          { rdvDate: rdvDate.toISOString().slice(0, 10), rdvTime: rdvHeure ?? undefined },
+          { headers: this.authHeaders(authorization), timeout: 8000 },
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(`Rendez-vous de ${id} non transmis au service prescripteur : ${(error as Error).message}`);
     }
   }
 
