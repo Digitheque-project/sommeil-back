@@ -13,6 +13,7 @@ import { firstValueFrom } from 'rxjs';
 import { AxiosError } from 'axios';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlanningService } from '../planning/planning.service';
+import { RattrapageStatuts, statutARenvoyer } from '../common/rattrapage-statut';
 
 /** Code couleur d'urgence de l'hôpital : NORMALE, URGENTE, TRES_URGENTE. */
 export type PrioriteRdv = 'NORMALE' | 'URGENTE' | 'TRES_URGENTE';
@@ -58,6 +59,7 @@ function lirePriorite(brut: unknown): PrioriteRdv {
 @Injectable()
 export class PrescriptionsService {
   private readonly logger = new Logger(PrescriptionsService.name);
+  private readonly rattrapage = new RattrapageStatuts();
 
   // Service prescriptions et registre des services : via la passerelle (GATEWAY_URL).
   private get PRESCRIPTIONS_URL(): string {
@@ -362,6 +364,10 @@ export class PrescriptionsService {
       );
 
       const list = Array.isArray(response.data) ? response.data : [];
+      // En arrière-plan : ne ralentit pas l'affichage de la liste.
+      void this.rattraperStatuts(list, authorization).catch((e) =>
+        this.logger.warn(`Rattrapage des statuts échoué : ${(e as Error).message}`),
+      );
 
       // Récupérer les planifications depuis la base de données locale
       const planificationsMap = await this.getPlanificationsSafely();
@@ -547,6 +553,47 @@ export class PrescriptionsService {
    * updatePrescriptionStatus, qui cible la route générique
    * .../medicale/:id/statut — inadaptée aux prescriptions polysomnographie.
    */
+  /**
+   * Rattrapage : un examen dont le compte rendu est validé ici, mais que le
+   * service Prescription n'a pas reçu comme « réalisé » (envoi échoué), est
+   * renvoyé. Le service Prescription prévient alors lui-même le prescripteur.
+   * Un statut distant final n'est jamais modifié ; échecs espacés.
+   */
+  private async rattraperStatuts(list: any[], authorization?: string): Promise<void> {
+    const statutDistant = new Map<string, string>(
+      list.map((p: any) => [String(p?.id ?? p?.prescriptionId ?? ''), String(p?.statut ?? '')]),
+    );
+    statutDistant.delete('');
+    if (!statutDistant.size) return;
+    const examens = await this.prisma.polysomnographiePlanification.findMany({
+      where: {
+        prescriptionId: { in: [...statutDistant.keys()] },
+        compteRendus: { some: { statut: 'VALIDE' } },
+      },
+      select: { prescriptionId: true },
+    });
+    for (const e of examens) {
+      const statut = statutARenvoyer('REALISEE', statutDistant.get(e.prescriptionId), [], [
+        'REALISEE',
+        'TERMINEE',
+        'ANNULEE',
+        'REFUSEE',
+        'NON_REALISEE',
+      ]);
+      if (!statut) continue;
+      const cle = `${e.prescriptionId}:${statut}`;
+      if (!this.rattrapage.peutTenter(cle)) continue;
+      let ok = true;
+      try {
+        await this.marquerPolysomnographieRealisee(e.prescriptionId, authorization);
+      } catch {
+        ok = false;
+      }
+      this.rattrapage.resultat(cle, ok);
+      if (ok) this.logger.log(`Rattrapage : statut REALISEE renvoyé pour la prescription ${e.prescriptionId}`);
+    }
+  }
+
   async marquerPolysomnographieRealisee(prescriptionId: string, authorization?: string) {
     try {
       const response = await firstValueFrom(
