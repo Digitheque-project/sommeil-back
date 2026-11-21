@@ -157,6 +157,10 @@ export class ConsultationsService {
     return {
       id: row.id,
       date: row.date,
+      // Date où la consultation a vraiment eu lieu (première observation, sinon
+      // dernière mise à jour d'une consultation close) : `date` est la date
+      // prévue du rendez-vous, souvent différente (report, retard, contrôle).
+      dateRealisation: this.dateRealisation(row),
       heure: row.heure,
       statut: row.statut ?? 'EN_ATTENTE',
       typeVisite: row.typeVisite ?? 'INITIALE',
@@ -165,6 +169,16 @@ export class ConsultationsService {
       observations: observation?.notes ?? '',
       nonMedicamentPrescriptions: nonMedicaments ? [nonMedicaments] : [],
     };
+  }
+
+  private dateRealisation(row: any): Date | null {
+    const observations = Array.isArray(row?.observations) ? row.observations : [];
+    const premiere = observations
+      .map((o: any) => (o?.createdAt ? new Date(o.createdAt) : null))
+      .filter((d: Date | null): d is Date => !!d && !isNaN(d.getTime()))
+      .sort((a: Date, b: Date) => a.getTime() - b.getTime())[0];
+    if (premiere) return premiere;
+    return row?.termine && row?.updatedAt ? new Date(row.updatedAt) : null;
   }
 
   private readonly consultationInclude = {
@@ -700,7 +714,13 @@ export class ConsultationsService {
         orderBy: { date: 'desc' },
       });
 
-      return consultations.map((consultation) => this.toHistoryEntry(consultation));
+      // Du plus récent au plus ancien selon la date réelle (la date prévue en repli).
+      return consultations
+        .map((consultation) => this.toHistoryEntry(consultation))
+        .sort(
+          (a, b) =>
+            new Date(b.dateRealisation ?? b.date).getTime() - new Date(a.dateRealisation ?? a.date).getTime(),
+        );
     } catch (dbError) {
       this.logger.warn(`Erreur base de données locale, tentative API externe: ${dbError}`);
     }
