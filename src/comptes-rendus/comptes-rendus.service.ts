@@ -79,7 +79,7 @@ export class ComptesRendusService {
       });
       if (!exam) throw new NotFoundException('Examen PSG non trouvé');
       patientId = patientId ?? exam.patientId;
-      patientNom = patientNom ?? `${exam.patientPrenom} ${exam.patientNom}`.trim();
+      patientNom = patientNom ?? [exam.patientPrenom, exam.patientNom].filter((x) => x && x !== "undefined").join(" ");
     }
 
     return this.prisma.compteRendu.create({
@@ -178,7 +178,7 @@ export class ComptesRendusService {
         serviceIdSource: exam.serviceIdSource,
         chuId: exam.chuId,
         patientId: exam.patientId,
-        patientNom: `${exam.patientPrenom} ${exam.patientNom}`.trim(),
+        patientNom: [exam.patientPrenom, exam.patientNom].filter((x) => x && x !== "undefined").join(" "),
         prescriptionId: exam.prescriptionId,
         compteRenduId: compteRendu.id,
         urgence: exam.urgence,
@@ -233,7 +233,7 @@ export class ComptesRendusService {
         data: {
           type: 'CONSULTATION',
           referenceId: consultation.id,
-          titre: `Consultation — ${consultation.patientPrenom} ${consultation.patientNom}`.trim(),
+          titre: `Consultation — ${[consultation.patientPrenom, consultation.patientNom].filter((x) => x && x !== "undefined").join(" ")}`.trim(),
           description: consultation.motif ?? undefined,
           donnees: consultation as any,
         },
@@ -284,9 +284,9 @@ export class ComptesRendusService {
         nom:
           compteRendu.patientNom ??
           (consultation
-            ? `${consultation.patientPrenom} ${consultation.patientNom}`.trim()
+            ? [consultation.patientPrenom, consultation.patientNom].filter((x) => x && x !== "undefined").join(" ")
             : exam
-              ? `${exam.patientPrenom} ${exam.patientNom}`.trim()
+              ? [exam.patientPrenom, exam.patientNom].filter((x) => x && x !== "undefined").join(" ")
               : null),
         dossier: consultation?.patientDossier ?? null,
       },
